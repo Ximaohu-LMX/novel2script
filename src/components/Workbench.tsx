@@ -36,6 +36,8 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   const [pendingReview, setPendingReview] = useState<DiffReview | null>(null)
   const [pendingValidation, setPendingValidation] = useState<{ valid: boolean; errors: string[] } | null>(null)
   const [characterReview, setCharacterReview] = useState<{ hunkId: string; characters: CharacterDraft[] } | null>(null)
+  const [deprecatedConfirm, setDeprecatedConfirm] = useState<{ hunkId: string; characters: BibleCharacter[] } | null>(null)
+  const [deprecatedConfirmed, setDeprecatedConfirmed] = useState(false)
 
   const chapter = project.chapters.find((c) => c.index === state.chapterIndex)!
   const v = state.versioning
@@ -46,6 +48,22 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   }, [project.bible])
 
   const validation = useMemo(() => validateScriptYaml(v.workingCopy), [v.workingCopy])
+  const characterById = useMemo(() => {
+    const m: Record<string, BibleCharacter> = {}
+    project.bible?.characters.forEach((c) => (m[c.id] = c))
+    return m
+  }, [project.bible])
+  const chapterCharacters = useMemo(() => {
+    const ids = new Set<string>()
+    validation.data?.scenes.forEach((scene) => {
+      scene.characters_present.forEach((id) => ids.add(id))
+    })
+    return Array.from(ids).map((id) => characterById[id] ?? { id, name: id, aliases: [], role: 'minor' as const, description: '', traits: [] })
+  }, [characterById, validation.data])
+  const deprecatedChapterCharacters = chapterCharacters.filter((c) => c.deprecated)
+  const pendingDeprecatedCharacters = useMemo(() => (
+    pendingReview ? collectDeprecatedScriptCharacters(pendingReview.proposedYaml, characterById) : []
+  ), [characterById, pendingReview])
 
   // ---- 生成初稿 ----
   const generate = async () => {
@@ -96,6 +114,8 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
       const review = createDiffReview(v.workingCopy, yaml, explanation)
       setPendingReview(review)
       setPendingValidation(validateScriptYaml(composeDiffReview(review)))
+      setDeprecatedConfirm(null)
+      setDeprecatedConfirmed(false)
       setDiffPair({ old: v.workingCopy, new: yaml })
       setView('diff')
     } catch (e: any) {
@@ -106,8 +126,12 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
     }
   }
 
-  const applyHunkDecision = (hunkId: string, status: HunkStatus, skipCharacterCheck = false) => {
+  const applyHunkDecision = (hunkId: string, status: HunkStatus, skipCharacterCheck = false, skipDeprecatedCheck = false) => {
     if (!pendingReview) return
+    if (status === 'accepted' && !skipDeprecatedCheck && !deprecatedConfirmed && pendingDeprecatedCharacters.length) {
+      setDeprecatedConfirm({ hunkId, characters: pendingDeprecatedCharacters })
+      return
+    }
     if (status === 'accepted' && !skipCharacterCheck) {
       const knownIds = new Set(project.bible?.characters.map((c) => c.id) ?? [])
       const beforeUnknown = new Set(collectUnknownScriptCharacters(composeDiffReview(pendingReview), knownIds).map((c) => c.id))
@@ -169,6 +193,14 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
     })
     setCharacterReview(null)
     finishHunkDecision(pendingReview, hunkId, 'accepted')
+  }
+
+  const confirmDeprecatedUse = () => {
+    if (!deprecatedConfirm) return
+    const hunkId = deprecatedConfirm.hunkId
+    setDeprecatedConfirm(null)
+    setDeprecatedConfirmed(true)
+    applyHunkDecision(hunkId, 'accepted', false, true)
   }
 
   const doCheckout = (id: string) => onUpdate((s) => ({ ...s, versioning: checkout(s.versioning, id) }))
@@ -235,6 +267,11 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg)' }}>
+          {deprecatedChapterCharacters.length > 0 && (
+            <div style={warningBar}>
+              本章包含已弃用角色:{deprecatedChapterCharacters.map((c) => c.name).join('、')}
+            </div>
+          )}
           {!hasContent ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
               <p className="muted">第 {state.chapterIndex} 章「{chapter.title}」尚未生成</p>
@@ -280,6 +317,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
       {/* ===== 右:对话 ===== */}
       <div style={rightPane}>
         <div style={paneHeader}>对话修改</div>
+        <ChapterCast characters={chapterCharacters} />
         <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {state.chat.length === 0 && (
             <p className="faint" style={{ fontSize: 12 }}>
@@ -318,11 +356,53 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
           onCancel={cancelNewCharacter}
         />
       )}
+      {deprecatedConfirm && (
+        <DeprecatedUseDialog
+          characters={deprecatedConfirm.characters}
+          onConfirm={confirmDeprecatedUse}
+          onCancel={() => setDeprecatedConfirm(null)}
+        />
+      )}
     </div>
   )
 }
 
 function rid() { return Math.random().toString(36).slice(2, 10) }
+
+function collectDeprecatedScriptCharacters(text: string, characterById: Record<string, BibleCharacter>): BibleCharacter[] {
+  const result = validateScriptYaml(text)
+  if (!result.valid || !result.data) return []
+  const ids = new Set<string>()
+  result.data.characters.forEach((character) => ids.add(character.id))
+  result.data.scenes.forEach((scene) => {
+    scene.characters_present.forEach((id) => ids.add(id))
+    scene.elements.forEach((element) => {
+      if (element.character) ids.add(element.character)
+    })
+  })
+  return Array.from(ids)
+    .map((id) => characterById[id])
+    .filter((character): character is BibleCharacter => Boolean(character?.deprecated))
+}
+
+function ChapterCast({ characters }: { characters: BibleCharacter[] }) {
+  return (
+    <div style={castBox}>
+      <div className="label" style={{ marginBottom: 8 }}>本章出场角色</div>
+      {characters.length ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {characters.map((character) => (
+            <span key={character.id} className="tag" style={character.deprecated ? deprecatedTag : undefined} title={character.id}>
+              {character.name}{character.deprecated ? ' ⚠ 已弃用' : ''}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="faint" style={{ fontSize: 12 }}>暂无可解析的出场角色</p>
+      )}
+    </div>
+  )
+}
 
 type CharacterDraft = BibleCharacter
 
@@ -387,6 +467,31 @@ function NewCharacterDialog({
   )
 }
 
+function DeprecatedUseDialog({
+  characters,
+  onConfirm,
+  onCancel,
+}: {
+  characters: BibleCharacter[]
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div style={modalMask}>
+      <div style={modal}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>AI 改动引用了已弃用角色</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          本次返回结果包含已弃用角色:{characters.map((c) => c.name).join('、')}。继续接受会保留这些引用。
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="ghost" onClick={onCancel}>先不接受</button>
+          <button className="primary" onClick={onConfirm}>继续接受</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const layout: React.CSSProperties = { display: 'grid', gridTemplateColumns: '230px 1fr 300px', height: '100%', overflow: 'hidden' }
 const paneBase: React.CSSProperties = { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }
 const leftPane: React.CSSProperties = { ...paneBase, borderRight: '1px solid var(--border)', background: 'var(--bg-panel)' }
@@ -400,6 +505,23 @@ const commitItem: React.CSSProperties = { border: '1px solid var(--border)', bor
 const pendingBar: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
   borderTop: '1px solid var(--accent)', background: 'var(--bg-elev)',
+}
+const warningBar: React.CSSProperties = {
+  borderBottom: '1px solid var(--danger)',
+  color: 'var(--danger)',
+  background: 'rgba(200, 115, 106, 0.12)',
+  padding: '8px 14px',
+  fontSize: 13,
+}
+const castBox: React.CSSProperties = {
+  padding: 12,
+  borderBottom: '1px solid var(--border)',
+  background: 'var(--bg-panel-2)',
+}
+const deprecatedTag: React.CSSProperties = {
+  color: 'var(--danger)',
+  borderColor: 'var(--danger)',
+  background: 'rgba(200, 115, 106, 0.10)',
 }
 const bubble: React.CSSProperties = { padding: '8px 12px', borderRadius: 8, fontSize: 13, maxWidth: '90%', whiteSpace: 'pre-wrap' }
 const userBubble: React.CSSProperties = { alignSelf: 'flex-end', background: 'var(--ink)', color: '#1a1a1a' }
