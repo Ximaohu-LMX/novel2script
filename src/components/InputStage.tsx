@@ -90,7 +90,7 @@ export default function InputStage({ project, llm, onUpdate }: Props) {
               </div>
             ))}
           </div>
-          <button className="primary accent" style={{ marginTop: 16 }} onClick={proceed}>
+          <button className="primary" style={{ marginTop: 16 }} onClick={proceed}>
             确认章节,进入设定分析 →
           </button>
         </div>

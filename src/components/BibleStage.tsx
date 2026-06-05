@@ -221,7 +221,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
             <button className="ghost" onClick={analyze} disabled={busy}>
               {busy ? '重新分析中…' : '↻ 重新分析'}
             </button>
-            <button className="primary accent" onClick={() => onUpdate((p) => ({ ...p, stage: 'generate' }))}>
+            <button className="primary" onClick={() => onUpdate((p) => ({ ...p, stage: 'generate' }))}>
               确认设定,进入剧本生成 →
             </button>
           </div>
