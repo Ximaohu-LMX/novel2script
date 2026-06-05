@@ -31,6 +31,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchProgress, setBatchProgress] = useState('')
+  const [batchStreams, setBatchStreams] = useState<Record<number, string>>({})
   const allSelected = project.chapters.length > 0 && project.chapters.every((chapter) => selected.has(chapter.index))
 
   const setStyle = (patch: Partial<StyleConfig>) =>
@@ -57,6 +58,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
   const batchGenerate = async () => {
     if (!project.bible || selected.size === 0) return
     setBatchBusy(true)
+    setBatchStreams({})
     const indices = [...selected].sort((a, b) => a - b)
     let done = 0
     const concurrency = Math.max(1, llm.maxConcurrency)
@@ -67,8 +69,16 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
         const idx = queue.shift()!
         const chapter = project.chapters.find((c) => c.index === idx)!
         updateChapterState(idx, (s) => ({ ...s, status: 'generating' }))
+        setBatchStreams((prev) => ({ ...prev, [idx]: '' }))
         try {
-          const { yaml, valid, errors } = await generateScript(chapter, project.bible!, project.styleConfig, '', llm)
+          const { yaml, valid, errors } = await generateScript(
+            chapter,
+            project.bible!,
+            project.styleConfig,
+            '',
+            llm,
+            (delta) => setBatchStreams((prev) => ({ ...prev, [idx]: `${prev[idx] ?? ''}${delta}` }))
+          )
           updateChapterState(idx, (s) => ({
             ...s,
             status: valid ? 'done' : 'error',
@@ -85,6 +95,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
     await Promise.all(Array.from({ length: concurrency }, worker))
     setBatchBusy(false)
     setBatchProgress('')
+    setBatchStreams({})
     setSelected(new Set())
   }
 
@@ -143,6 +154,16 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
             onClick={batchGenerate}>
             {batchBusy ? `批量生成 ${batchProgress}` : `批量生成 (${selected.size})`}
           </button>
+          {batchBusy && Object.keys(batchStreams).length > 0 && (
+            <div style={batchStreamBox}>
+              {Object.entries(batchStreams).map(([idx, text]) => (
+                <div key={idx} style={{ marginBottom: 8 }}>
+                  <div className="label" style={{ marginBottom: 4 }}>第{idx}章流式输出</div>
+                  <pre style={batchStreamPre}>{text || '等待模型返回...'}</pre>
+                </div>
+              ))}
+            </div>
+          )}
           <ExportButtons project={project} />
         </div>
       </div>
@@ -205,4 +226,24 @@ const sidebar: React.CSSProperties = {
 const chapterRow: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid var(--border)',
   borderRadius: 6, marginBottom: 6, background: 'var(--bg-panel-2)',
+}
+const batchStreamBox: React.CSSProperties = {
+  marginTop: 8,
+  maxHeight: 220,
+  overflow: 'auto',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'var(--bg-panel-2)',
+  padding: 8,
+}
+const batchStreamPre: React.CSSProperties = {
+  margin: 0,
+  maxHeight: 96,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  fontFamily: 'var(--mono)',
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: 'var(--text-dim)',
 }

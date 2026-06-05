@@ -9,8 +9,6 @@ interface Props {
   onAcceptHunk?: (id: string) => void
   onRejectHunk?: (id: string) => void
   onResetHunk?: (id: string) => void
-  onAcceptAllPending?: () => void
-  onRejectAllPending?: () => void
 }
 
 export default function DiffView({
@@ -21,21 +19,10 @@ export default function DiffView({
   onAcceptHunk,
   onRejectHunk,
   onResetHunk,
-  onAcceptAllPending,
-  onRejectAllPending,
 }: Props) {
   if (review) {
-    const hunks = review.chunks.flatMap((chunk) => (chunk.type === 'hunk' ? [chunk.hunk] : []))
-    const pendingCount = hunks.filter((hunk) => hunk.status === 'pending').length
     return (
       <div style={wrap}>
-        <div style={reviewToolbar}>
-          <span>还剩 {pendingCount} 个待确认 / 共 {hunks.length} 处改动</span>
-          <span style={{ display: 'flex', gap: 6 }}>
-            <button className="ghost small" disabled={pendingCount === 0} onClick={onRejectAllPending}>一键拒绝</button>
-            <button className="primary small" disabled={pendingCount === 0} onClick={onAcceptAllPending}>一键接受</button>
-          </span>
-        </div>
         {warning && (
           <div style={warningBox}>
             Schema 提醒:{warning}
@@ -169,23 +156,6 @@ const hunkHeader: React.CSSProperties = {
   gap: 8,
   padding: '6px 8px',
   borderBottom: '1px solid var(--border)',
-  background: 'var(--bg-elev)',
-  color: 'var(--text-dim)',
-  fontFamily: 'var(--sans)',
-}
-
-const reviewToolbar: React.CSSProperties = {
-  position: 'sticky',
-  top: 0,
-  zIndex: 2,
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 8,
-  padding: '8px 10px',
-  marginBottom: 10,
-  border: '1px solid var(--border)',
-  borderRadius: 6,
   background: 'var(--bg-elev)',
   color: 'var(--text-dim)',
   fontFamily: 'var(--sans)',

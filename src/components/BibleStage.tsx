@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Project, LLMConfig, StoryBible, BibleCharacter, BibleLocation, BibleSubLocation, CharacterRole } from '../types'
 import { extractBible } from '../agents'
 import { commit } from '../lib/version'
@@ -17,7 +17,9 @@ const ROLE_LABEL: Record<CharacterRole, string> = {
 export default function BibleStage({ project, llm, onUpdate }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [showDeprecated, setShowDeprecated] = useState(false)
+  const [showDeprecatedCharacters, setShowDeprecatedCharacters] = useState(false)
+  const [showDeprecatedLocations, setShowDeprecatedLocations] = useState(false)
+  const [flashDeprecated, setFlashDeprecated] = useState<'characters' | 'locations' | null>(null)
   const [blockedDelete, setBlockedDelete] = useState<{ title: string; refs: ScriptReference[] } | null>(null)
   const [focusedName, setFocusedName] = useState<{ kind: 'character' | 'location'; id: string; name: string } | null>(null)
   const [renameFlow, setRenameFlow] = useState<RenameFlow | null>(null)
@@ -47,7 +49,18 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const updateChar = (id: string, patch: Partial<BibleCharacter>) =>
     patchBible((b) => ({ ...b, characters: b.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
 
-  const deprecateChar = (id: string) => updateChar(id, { deprecated: true })
+  const flashSection = (section: 'characters' | 'locations') => {
+    setFlashDeprecated(section)
+    window.setTimeout(() => {
+      setFlashDeprecated((current) => (current === section ? null : current))
+    }, 650)
+  }
+
+  const deprecateChar = (id: string) => {
+    updateChar(id, { deprecated: true })
+    setShowDeprecatedCharacters(true)
+    flashSection('characters')
+  }
   const restoreChar = (id: string) => updateChar(id, { deprecated: false })
   const purgeChar = (character: BibleCharacter) => {
     const refs = findProjectReferences(project, { kind: 'character', value: character.id })
@@ -75,7 +88,11 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
       )),
     }))
 
-  const deprecateLocation = (id: string) => updateLocation(id, { deprecated: true })
+  const deprecateLocation = (id: string) => {
+    updateLocation(id, { deprecated: true })
+    setShowDeprecatedLocations(true)
+    flashSection('locations')
+  }
   const restoreLocation = (id: string) => updateLocation(id, { deprecated: false })
   const purgeLocation = (location: BibleLocation) => {
     const refs = findProjectReferences(project, { kind: 'location', value: location.name, includeText: true })
@@ -245,6 +262,26 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
             ))}
           </div>
 
+          <DeprecatedSection
+            title={`已弃用角色(${deprecatedCharacters.length})`}
+            open={showDeprecatedCharacters}
+            flashing={flashDeprecated === 'characters'}
+            onToggle={() => setShowDeprecatedCharacters((v) => !v)}
+          >
+            {deprecatedCharacters.length === 0 ? (
+              <p className="faint" style={{ fontSize: 12 }}>暂无已弃用角色。</p>
+            ) : deprecatedCharacters.map((character) => (
+              <div key={character.id} style={deprecatedRow}>
+                <div style={{ flex: 1 }}>
+                  <strong>{character.name}</strong>
+                  <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>{character.id}</span>
+                </div>
+                <button className="ghost small" onClick={() => restoreChar(character.id)}>恢复</button>
+                <button className="ghost small danger" onClick={() => purgeChar(character)}>彻底删除</button>
+              </div>
+            ))}
+          </DeprecatedSection>
+
           {/* 世界观 */}
           <h2 style={{ fontSize: 18, margin: '24px 0 12px' }}>世界观 / 背景</h2>
           <textarea value={bible.worldview} onChange={(e) => patchBible((b) => ({ ...b, worldview: e.target.value }))}
@@ -309,39 +346,25 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
             {activeLocations.length === 0 && <p className="faint" style={{ fontSize: 12 }}>暂无场景。可手动添加大场景与小场景。</p>}
           </div>
 
-          <div style={{ marginTop: 24 }}>
-            <button className="ghost small" onClick={() => setShowDeprecated((v) => !v)}>
-              {showDeprecated ? '隐藏已弃用' : `已弃用 · ${deprecatedCharacters.length + deprecatedLocations.length}`}
-            </button>
-            {showDeprecated && (
-              <div style={deprecatedPanel}>
-                <h2 style={{ fontSize: 16, marginBottom: 10 }}>已弃用</h2>
-                {deprecatedCharacters.length === 0 && deprecatedLocations.length === 0 && (
-                  <p className="faint" style={{ fontSize: 12 }}>暂无已弃用的角色或地点。</p>
-                )}
-                {deprecatedCharacters.map((character) => (
-                  <div key={character.id} style={deprecatedRow}>
-                    <div style={{ flex: 1 }}>
-                      <strong>{character.name}</strong>
-                      <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>{character.id}</span>
-                    </div>
-                    <button className="ghost small" onClick={() => restoreChar(character.id)}>恢复</button>
-                    <button className="ghost small danger" onClick={() => purgeChar(character)}>彻底删除</button>
-                  </div>
-                ))}
-                {deprecatedLocations.map((location) => (
-                  <div key={location.id} style={deprecatedRow}>
-                    <div style={{ flex: 1 }}>
-                      <strong>{location.name}</strong>
-                      <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>地点</span>
-                    </div>
-                    <button className="ghost small" onClick={() => restoreLocation(location.id)}>恢复</button>
-                    <button className="ghost small danger" onClick={() => purgeLocation(location)}>彻底删除</button>
-                  </div>
-                ))}
+          <DeprecatedSection
+            title={`已弃用地点(${deprecatedLocations.length})`}
+            open={showDeprecatedLocations}
+            flashing={flashDeprecated === 'locations'}
+            onToggle={() => setShowDeprecatedLocations((v) => !v)}
+          >
+            {deprecatedLocations.length === 0 ? (
+              <p className="faint" style={{ fontSize: 12 }}>暂无已弃用地点。</p>
+            ) : deprecatedLocations.map((location) => (
+              <div key={location.id} style={deprecatedRow}>
+                <div style={{ flex: 1 }}>
+                  <strong>{location.name}</strong>
+                  <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>地点</span>
+                </div>
+                <button className="ghost small" onClick={() => restoreLocation(location.id)}>恢复</button>
+                <button className="ghost small danger" onClick={() => purgeLocation(location)}>彻底删除</button>
               </div>
-            )}
-          </div>
+            ))}
+          </DeprecatedSection>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 28 }}>
             <button className="ghost" onClick={analyze} disabled={busy}>
@@ -385,6 +408,33 @@ type RenameFlow = {
 
 function refKey(ref: ScriptReference): string {
   return `${ref.chapterIndex}:${ref.path}`
+}
+
+function DeprecatedSection({
+  title,
+  open,
+  flashing,
+  onToggle,
+  children,
+}: {
+  title: string
+  open: boolean
+  flashing: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button className="ghost small" onClick={onToggle}>
+        {open ? `隐藏${title}` : title}
+      </button>
+      {open && (
+        <div style={deprecatedPanel} className={flashing ? 'deprecated-flash' : undefined}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function RenameDialog({

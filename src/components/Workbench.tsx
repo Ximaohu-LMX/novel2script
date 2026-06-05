@@ -27,11 +27,18 @@ interface Props {
 }
 
 type View = 'preview' | 'code' | 'diff'
+type StreamOutput = {
+  kind: 'generate' | 'edit'
+  title: string
+  text: string
+  done: boolean
+}
 
 export default function Workbench({ project, llm, state, onUpdate, onProjectUpdate }: Props) {
   const [view, setView] = useState<View>('preview')
   const [chatInput, setChatInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [streamOutput, setStreamOutput] = useState<StreamOutput | null>(null)
   const [diffPair, setDiffPair] = useState<{ old: string; new: string } | null>(null)
   const [pendingReview, setPendingReview] = useState<DiffReview | null>(null)
   const [pendingValidation, setPendingValidation] = useState<{ valid: boolean; errors: string[] } | null>(null)
@@ -70,6 +77,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   const generate = async () => {
     if (!project.bible) return
     setBusy(true)
+    setStreamOutput({ kind: 'generate', title: '生成剧本初稿', text: '', done: false })
     onUpdate((s) => ({ ...s, status: 'generating', error: undefined }))
     try {
       const prevState = project.chapterStates[state.chapterIndex - 1]
@@ -77,7 +85,12 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         ? `(上一章已生成剧本)`
         : ''
       const { yaml, valid, errors } = await generateScript(
-        chapter, project.bible, project.styleConfig, prevSummary, llm
+        chapter,
+        project.bible,
+        project.styleConfig,
+        prevSummary,
+        llm,
+        (delta) => setStreamOutput((current) => appendStream(current, 'generate', '生成剧本初稿', delta))
       )
       onUpdate((s) => ({
         ...s,
@@ -85,8 +98,10 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         error: valid ? undefined : errors.join('; '),
         versioning: commit(s.versioning, yaml, `生成第${state.chapterIndex}章初稿`, 'ai'),
       }))
+      setStreamOutput((current) => current ? { ...current, done: true, title: valid ? '生成完成' : '生成完成,但 Schema 有错误' } : current)
     } catch (e: any) {
       onUpdate((s) => ({ ...s, status: 'error', error: e.message }))
+      setStreamOutput((current) => current ? { ...current, done: true, title: `生成出错:${e.message}` } : current)
     } finally {
       setBusy(false)
     }
@@ -108,8 +123,15 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
     const userMsg: ChatMessage = { id: rid(), role: 'user', content: text, timestamp: Date.now() }
     onUpdate((s) => ({ ...s, chat: [...s.chat, userMsg] }))
     setBusy(true)
+    setStreamOutput({ kind: 'edit', title: 'AI 正在修改', text: '', done: false })
     try {
-      const { explanation, yaml } = await editScript(v.workingCopy, text, project.bible, llm)
+      const { explanation, yaml } = await editScript(
+        v.workingCopy,
+        text,
+        project.bible,
+        llm,
+        (delta) => setStreamOutput((current) => appendStream(current, 'edit', 'AI 正在修改', delta))
+      )
       const aiMsg: ChatMessage = { id: rid(), role: 'assistant', content: explanation, pendingYaml: yaml, timestamp: Date.now() }
       onUpdate((s) => ({ ...s, chat: [...s.chat, aiMsg] }))
       const review = createDiffReview(v.workingCopy, yaml, explanation)
@@ -120,9 +142,11 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
       setLastReviewWarning('')
       setDiffPair({ old: v.workingCopy, new: yaml })
       setView('diff')
+      setStreamOutput((current) => current ? { ...current, done: true, title: '修改完成,请逐块审阅' } : current)
     } catch (e: any) {
       const aiMsg: ChatMessage = { id: rid(), role: 'assistant', content: `出错:${e.message}`, timestamp: Date.now() }
       onUpdate((s) => ({ ...s, chat: [...s.chat, aiMsg] }))
+      setStreamOutput((current) => current ? { ...current, done: true, title: `修改出错:${e.message}` } : current)
     } finally {
       setBusy(false)
     }
@@ -295,18 +319,25 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               <button className="primary" disabled={busy} onClick={generate}>
                 {busy ? <><span className="spinner" /> &nbsp;生成中…</> : '生成剧本初稿'}
               </button>
+              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
             </div>
           ) : view === 'preview' ? (
-            <ScriptPreview yamlText={v.workingCopy} charNames={charNames} />
+            <>
+              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
+              <ScriptPreview yamlText={v.workingCopy} charNames={charNames} />
+            </>
           ) : view === 'code' ? (
-            <Editor
-              height="100%"
-              language="yaml"
-              theme="vs-dark"
-              value={v.workingCopy}
-              onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
-              options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
-            />
+            <>
+              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
+              <Editor
+                height="100%"
+                language="yaml"
+                theme="vs-dark"
+                value={v.workingCopy}
+                onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
+                options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
+              />
+            </>
           ) : pendingReview ? (
             <DiffView
               oldText={pendingReview.baseYaml}
@@ -316,8 +347,6 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               onAcceptHunk={(id) => applyHunkDecision(id, 'accepted')}
               onRejectHunk={(id) => applyHunkDecision(id, 'rejected')}
               onResetHunk={(id) => applyHunkDecision(id, 'pending')}
-              onAcceptAllPending={() => applyPendingHunks('accepted')}
-              onRejectAllPending={() => applyPendingHunks('rejected')}
             />
           ) : diffPair ? (
             <DiffView oldText={diffPair.old} newText={diffPair.new} />
@@ -327,9 +356,19 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         {/* 待审阅条 */}
         {pendingReview && (
           <div style={pendingBar} className="fade-in">
-            <span style={{ fontSize: 12, flex: 1 }}>
-              AI 改动:{pendingReview.explanation} · 待处理 {reviewHunks(pendingReview).filter((h) => h.status === 'pending').length}/{reviewHunks(pendingReview).length} 块
-            </span>
+            {(() => {
+              const hunks = reviewHunks(pendingReview)
+              const pendingCount = hunks.filter((h) => h.status === 'pending').length
+              return (
+                <>
+                  <span style={{ fontSize: 12, flex: 1 }}>
+                    AI 改动:{pendingReview.explanation} · 待处理 {pendingCount}/{hunks.length} 块
+                  </span>
+                  <button className="ghost small" disabled={pendingCount === 0} onClick={() => applyPendingHunks('rejected')}>一键拒绝</button>
+                  <button className="primary small" disabled={pendingCount === 0} onClick={() => applyPendingHunks('accepted')}>一键接受</button>
+                </>
+              )
+            })()}
           </div>
         )}
       </div>
@@ -352,6 +391,14 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
             </div>
           ))}
           {busy && <div style={{ ...bubble, ...aiBubble }}><span className="spinner" /></div>}
+          {streamOutput?.kind === 'edit' && (
+            <div style={{ ...bubble, ...aiBubble, maxWidth: '100%' }}>
+              <div className="label" style={{ marginBottom: 6 }}>
+                {streamOutput.done ? streamOutput.title : <><span className="spinner" /> &nbsp;{streamOutput.title}</>}
+              </div>
+              <pre style={streamPre}>{streamOutput.text || '等待模型返回...'}</pre>
+            </div>
+          )}
         </div>
         <div style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
           <textarea
@@ -388,6 +435,26 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
 }
 
 function rid() { return Math.random().toString(36).slice(2, 10) }
+
+function appendStream(current: StreamOutput | null, kind: StreamOutput['kind'], title: string, delta: string): StreamOutput {
+  return {
+    kind: current?.kind ?? kind,
+    title: current?.title ?? title,
+    text: `${current?.text ?? ''}${delta}`,
+    done: false,
+  }
+}
+
+function StreamPanel({ output }: { output: StreamOutput }) {
+  return (
+    <div style={streamPanel}>
+      <div style={streamHeader}>
+        <span>{output.done ? output.title : <><span className="spinner" /> &nbsp;{output.title}</>}</span>
+      </div>
+      <pre style={streamPre}>{output.text || '等待模型返回...'}</pre>
+    </div>
+  )
+}
 
 function collectDeprecatedScriptCharacters(text: string, characterById: Record<string, BibleCharacter>): BibleCharacter[] {
   const result = validateScriptYaml(text)
@@ -532,6 +599,34 @@ const warningBar: React.CSSProperties = {
   background: 'rgba(200, 115, 106, 0.12)',
   padding: '8px 14px',
   fontSize: 13,
+}
+const streamPanel: React.CSSProperties = {
+  width: 'min(860px, calc(100% - 32px))',
+  maxHeight: 300,
+  overflow: 'hidden',
+  border: '1px solid var(--border)',
+  borderRadius: 8,
+  background: 'var(--bg-panel)',
+  boxShadow: 'var(--shadow)',
+}
+const streamHeader: React.CSSProperties = {
+  padding: '8px 10px',
+  borderBottom: '1px solid var(--border)',
+  color: 'var(--text-dim)',
+  fontSize: 12,
+  fontWeight: 700,
+}
+const streamPre: React.CSSProperties = {
+  margin: 0,
+  padding: 10,
+  maxHeight: 240,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  fontFamily: 'var(--mono)',
+  fontSize: 12,
+  lineHeight: 1.6,
+  color: 'var(--text)',
 }
 const castBox: React.CSSProperties = {
   padding: 12,
