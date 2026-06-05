@@ -19,7 +19,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const [error, setError] = useState('')
   const [showDeprecatedCharacters, setShowDeprecatedCharacters] = useState(false)
   const [showDeprecatedLocations, setShowDeprecatedLocations] = useState(false)
-  const [flashDeprecated, setFlashDeprecated] = useState<'characters' | 'locations' | null>(null)
+  const [flashItem, setFlashItem] = useState<{ kind: 'character' | 'location'; id: string } | null>(null)
   const [blockedDelete, setBlockedDelete] = useState<{ title: string; refs: ScriptReference[] } | null>(null)
   const [focusedName, setFocusedName] = useState<{ kind: 'character' | 'location'; id: string; name: string } | null>(null)
   const [renameFlow, setRenameFlow] = useState<RenameFlow | null>(null)
@@ -49,19 +49,22 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const updateChar = (id: string, patch: Partial<BibleCharacter>) =>
     patchBible((b) => ({ ...b, characters: b.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
 
-  const flashSection = (section: 'characters' | 'locations') => {
-    setFlashDeprecated(section)
+  const flashMovedItem = (kind: 'character' | 'location', id: string) => {
+    setFlashItem({ kind, id })
     window.setTimeout(() => {
-      setFlashDeprecated((current) => (current === section ? null : current))
-    }, 650)
+      setFlashItem((current) => (current?.kind === kind && current.id === id ? null : current))
+    }, 1000)
   }
 
   const deprecateChar = (id: string) => {
     updateChar(id, { deprecated: true })
     setShowDeprecatedCharacters(true)
-    flashSection('characters')
+    flashMovedItem('character', id)
   }
-  const restoreChar = (id: string) => updateChar(id, { deprecated: false })
+  const restoreChar = (id: string) => {
+    updateChar(id, { deprecated: false })
+    flashMovedItem('character', id)
+  }
   const purgeChar = (character: BibleCharacter) => {
     const refs = findProjectReferences(project, { kind: 'character', value: character.id })
     if (refs.length) {
@@ -91,9 +94,12 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const deprecateLocation = (id: string) => {
     updateLocation(id, { deprecated: true })
     setShowDeprecatedLocations(true)
-    flashSection('locations')
+    flashMovedItem('location', id)
   }
-  const restoreLocation = (id: string) => updateLocation(id, { deprecated: false })
+  const restoreLocation = (id: string) => {
+    updateLocation(id, { deprecated: false })
+    flashMovedItem('location', id)
+  }
   const purgeLocation = (location: BibleLocation) => {
     const refs = findProjectReferences(project, { kind: 'location', value: location.name, includeText: true })
     if (refs.length) {
@@ -238,7 +244,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
             {activeCharacters.map((c) => (
-              <div key={c.id} style={card}>
+              <div key={c.id} style={card} className={flashItem?.kind === 'character' && flashItem.id === c.id ? 'moved-item-flash' : undefined}>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <input value={c.name}
                     onFocus={() => setFocusedName({ kind: 'character', id: c.id, name: c.name })}
@@ -265,13 +271,12 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
           <DeprecatedSection
             title={`已弃用角色(${deprecatedCharacters.length})`}
             open={showDeprecatedCharacters}
-            flashing={flashDeprecated === 'characters'}
             onToggle={() => setShowDeprecatedCharacters((v) => !v)}
           >
             {deprecatedCharacters.length === 0 ? (
               <p className="faint" style={{ fontSize: 12 }}>暂无已弃用角色。</p>
             ) : deprecatedCharacters.map((character) => (
-              <div key={character.id} style={deprecatedRow}>
+              <div key={character.id} style={deprecatedRow} className={flashItem?.kind === 'character' && flashItem.id === character.id ? 'moved-item-flash' : undefined}>
                 <div style={{ flex: 1 }}>
                   <strong>{character.name}</strong>
                   <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>{character.id}</span>
@@ -296,7 +301,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
             {activeLocations.map((location) => {
               const subLocations = location.subLocations ?? []
               return (
-                <div key={location.id} style={card}>
+                <div key={location.id} style={card} className={flashItem?.kind === 'location' && flashItem.id === location.id ? 'moved-item-flash' : undefined}>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <input
                       value={location.name}
@@ -349,13 +354,12 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
           <DeprecatedSection
             title={`已弃用地点(${deprecatedLocations.length})`}
             open={showDeprecatedLocations}
-            flashing={flashDeprecated === 'locations'}
             onToggle={() => setShowDeprecatedLocations((v) => !v)}
           >
             {deprecatedLocations.length === 0 ? (
               <p className="faint" style={{ fontSize: 12 }}>暂无已弃用地点。</p>
             ) : deprecatedLocations.map((location) => (
-              <div key={location.id} style={deprecatedRow}>
+              <div key={location.id} style={deprecatedRow} className={flashItem?.kind === 'location' && flashItem.id === location.id ? 'moved-item-flash' : undefined}>
                 <div style={{ flex: 1 }}>
                   <strong>{location.name}</strong>
                   <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>地点</span>
@@ -413,13 +417,11 @@ function refKey(ref: ScriptReference): string {
 function DeprecatedSection({
   title,
   open,
-  flashing,
   onToggle,
   children,
 }: {
   title: string
   open: boolean
-  flashing: boolean
   onToggle: () => void
   children: ReactNode
 }) {
@@ -429,7 +431,7 @@ function DeprecatedSection({
         {open ? `隐藏${title}` : title}
       </button>
       {open && (
-        <div style={deprecatedPanel} className={flashing ? 'deprecated-flash' : undefined}>
+        <div style={deprecatedPanel}>
           {children}
         </div>
       )}
