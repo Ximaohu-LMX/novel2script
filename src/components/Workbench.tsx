@@ -11,7 +11,7 @@ import {
   isReviewComplete,
   mergeCharacterDraft,
   reviewHunks,
-  setHunkStatus,
+  setHunkStatuses,
   type DiffReview,
   type HunkStatus,
 } from '../lib/diffReview'
@@ -36,8 +36,9 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   const [pendingReview, setPendingReview] = useState<DiffReview | null>(null)
   const [pendingValidation, setPendingValidation] = useState<{ valid: boolean; errors: string[] } | null>(null)
   const [characterReview, setCharacterReview] = useState<{ hunkId: string; characters: CharacterDraft[] } | null>(null)
-  const [deprecatedConfirm, setDeprecatedConfirm] = useState<{ hunkId: string; characters: BibleCharacter[] } | null>(null)
+  const [deprecatedConfirm, setDeprecatedConfirm] = useState<{ hunkIds: string[]; characters: BibleCharacter[] } | null>(null)
   const [deprecatedConfirmed, setDeprecatedConfirmed] = useState(false)
+  const [lastReviewWarning, setLastReviewWarning] = useState('')
 
   const chapter = project.chapters.find((c) => c.index === state.chapterIndex)!
   const v = state.versioning
@@ -116,6 +117,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
       setPendingValidation(validateScriptYaml(composeDiffReview(review)))
       setDeprecatedConfirm(null)
       setDeprecatedConfirmed(false)
+      setLastReviewWarning('')
       setDiffPair({ old: v.workingCopy, new: yaml })
       setView('diff')
     } catch (e: any) {
@@ -127,15 +129,27 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   }
 
   const applyHunkDecision = (hunkId: string, status: HunkStatus, skipCharacterCheck = false, skipDeprecatedCheck = false) => {
+    applyHunkDecisions([hunkId], status, skipCharacterCheck, skipDeprecatedCheck)
+  }
+
+  const applyPendingHunks = (status: HunkStatus) => {
     if (!pendingReview) return
+    const ids = reviewHunks(pendingReview).filter((hunk) => hunk.status === 'pending').map((hunk) => hunk.id)
+    applyHunkDecisions(ids, status)
+  }
+
+  const applyHunkDecisions = (hunkIds: string[], status: HunkStatus, skipCharacterCheck = false, skipDeprecatedCheck = false) => {
+    if (!pendingReview) return
+    if (!hunkIds.length) return
     if (status === 'accepted' && !skipDeprecatedCheck && !deprecatedConfirmed && pendingDeprecatedCharacters.length) {
-      setDeprecatedConfirm({ hunkId, characters: pendingDeprecatedCharacters })
+      setDeprecatedConfirm({ hunkIds, characters: pendingDeprecatedCharacters })
       return
     }
     if (status === 'accepted' && !skipCharacterCheck) {
       const knownIds = new Set(project.bible?.characters.map((c) => c.id) ?? [])
       const beforeUnknown = new Set(collectUnknownScriptCharacters(composeDiffReview(pendingReview), knownIds).map((c) => c.id))
-      const candidate = composeDiffReview(pendingReview, { [hunkId]: 'accepted' })
+      const overrides = Object.fromEntries(hunkIds.map((id) => [id, 'accepted' as const]))
+      const candidate = composeDiffReview(pendingReview, overrides)
       const proposedById = new Map(
         collectUnknownScriptCharacters(pendingReview.proposedYaml, knownIds).map((c) => [c.id, c])
       )
@@ -144,20 +158,22 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         .map((c) => mergeCharacterDraft(c, proposedById.get(c.id)))
 
       if (introduced.length) {
-        setCharacterReview({ hunkId, characters: introduced })
+        setCharacterReview({ hunkId: hunkIds.join(','), characters: introduced })
         return
       }
     }
 
-    finishHunkDecision(pendingReview, hunkId, status)
+    finishHunkDecisions(pendingReview, hunkIds, status)
   }
 
-  const finishHunkDecision = (review: DiffReview, hunkId: string, status: HunkStatus) => {
-    const updated = setHunkStatus(review, hunkId, status)
+  const finishHunkDecisions = (review: DiffReview, hunkIds: string[], status: HunkStatus) => {
+    const updated = setHunkStatuses(review, hunkIds, status)
     const composed = composeDiffReview(updated)
-    setPendingValidation(validateScriptYaml(composed))
+    const finalValidation = validateScriptYaml(composed)
+    setPendingValidation(finalValidation)
     if (isReviewComplete(updated)) {
-      onUpdate((s) => ({ ...s, versioning: commit(s.versioning, composed, '对话逐块修改', 'ai') }))
+      setLastReviewWarning(finalValidation.valid ? '' : `对话修改后 Schema 警告:${finalValidation.errors.join('; ')}`)
+      onUpdate((s) => ({ ...s, versioning: commit(s.versioning, composed, '对话修改', 'ai') }))
       setPendingReview(null)
       setPendingValidation(null)
       setDiffPair(null)
@@ -169,9 +185,9 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
 
   const cancelNewCharacter = () => {
     if (!characterReview || !pendingReview) return
-    const hunkId = characterReview.hunkId
+    const hunkIds = characterReview.hunkId.split(',').filter(Boolean)
     setCharacterReview(null)
-    finishHunkDecision(pendingReview, hunkId, 'rejected')
+    finishHunkDecisions(pendingReview, hunkIds, 'rejected')
   }
 
   const confirmNewCharacter = () => {
@@ -192,15 +208,15 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
       }
     })
     setCharacterReview(null)
-    finishHunkDecision(pendingReview, hunkId, 'accepted')
+    finishHunkDecisions(pendingReview, hunkId.split(',').filter(Boolean), 'accepted')
   }
 
   const confirmDeprecatedUse = () => {
     if (!deprecatedConfirm) return
-    const hunkId = deprecatedConfirm.hunkId
+    const hunkIds = deprecatedConfirm.hunkIds
     setDeprecatedConfirm(null)
     setDeprecatedConfirmed(true)
-    applyHunkDecision(hunkId, 'accepted', false, true)
+    applyHunkDecisions(hunkIds, 'accepted', false, true)
   }
 
   const doCheckout = (id: string) => onUpdate((s) => ({ ...s, versioning: checkout(s.versioning, id) }))
@@ -272,6 +288,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               本章包含已弃用角色:{deprecatedChapterCharacters.map((c) => c.name).join('、')}
             </div>
           )}
+          {lastReviewWarning && <div style={warningBar}>{lastReviewWarning}</div>}
           {!hasContent ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
               <p className="muted">第 {state.chapterIndex} 章「{chapter.title}」尚未生成</p>
@@ -298,6 +315,9 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               warning={pendingValidation && !pendingValidation.valid ? pendingValidation.errors.join('; ') : undefined}
               onAcceptHunk={(id) => applyHunkDecision(id, 'accepted')}
               onRejectHunk={(id) => applyHunkDecision(id, 'rejected')}
+              onResetHunk={(id) => applyHunkDecision(id, 'pending')}
+              onAcceptAllPending={() => applyPendingHunks('accepted')}
+              onRejectAllPending={() => applyPendingHunks('rejected')}
             />
           ) : diffPair ? (
             <DiffView oldText={diffPair.old} newText={diffPair.new} />

@@ -41,9 +41,17 @@ export function createDiffReview(baseYaml: string, proposedYaml: string, explana
     current = null
   }
 
-  changes.forEach((change: Change) => {
+  changes.forEach((change: Change, index: number) => {
     const lines = countLines(change.value)
     if (!change.added && !change.removed) {
+      const next = changes[index + 1]
+      if (current && next && (next.added || next.removed) && shouldMergeContext(change.value)) {
+        current.oldText += change.value
+        current.newText += change.value
+        oldLine += lines
+        newLine += lines
+        return
+      }
       flush()
       chunks.push({ type: 'context', text: change.value })
       oldLine += lines
@@ -90,10 +98,15 @@ export function composeDiffReview(
 }
 
 export function setHunkStatus(review: DiffReview, hunkId: string, status: HunkStatus): DiffReview {
+  return setHunkStatuses(review, [hunkId], status)
+}
+
+export function setHunkStatuses(review: DiffReview, hunkIds: string[], status: HunkStatus): DiffReview {
+  const targets = new Set(hunkIds)
   return {
     ...review,
     chunks: review.chunks.map((chunk) => (
-      chunk.type === 'hunk' && chunk.hunk.id === hunkId
+      chunk.type === 'hunk' && targets.has(chunk.hunk.id)
         ? { type: 'hunk', hunk: { ...chunk.hunk, status } }
         : chunk
     )),
@@ -182,4 +195,17 @@ function normalizeCharacter(character: Partial<DraftCharacter> & { id: string })
 function countLines(value: string): number {
   if (!value) return 0
   return value.endsWith('\n') ? value.split('\n').length - 1 : value.split('\n').length
+}
+
+function shouldMergeContext(value: string): boolean {
+  const lines = value.split('\n').filter(Boolean)
+  if (lines.length > 8) return false
+  return !lines.some((line) => (
+    /^[a-z_]+:/.test(line)
+    || /^  - id:\s*scene_/.test(line)
+    || /^    chapter_ref:/.test(line)
+    || /^    heading:/.test(line)
+    || /^    elements:/.test(line)
+    || /^      - type:/.test(line)
+  ))
 }
