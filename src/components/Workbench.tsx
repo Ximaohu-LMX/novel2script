@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import type { Project, LLMConfig, ChapterScriptState, ChatMessage, Commit, BibleCharacter } from '../types'
 import { generateScript, editScript } from '../agents'
@@ -46,6 +46,8 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   const [deprecatedConfirm, setDeprecatedConfirm] = useState<{ hunkIds: string[]; characters: BibleCharacter[] } | null>(null)
   const [deprecatedConfirmed, setDeprecatedConfirmed] = useState(false)
   const [lastReviewWarning, setLastReviewWarning] = useState('')
+  const monacoRef = useRef<any>(null)
+  const yamlModelRef = useRef<any>(null)
 
   const chapter = project.chapters.find((c) => c.index === state.chapterIndex)!
   const v = state.versioning
@@ -56,6 +58,9 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   }, [project.bible])
 
   const validation = useMemo(() => validateScriptYaml(v.workingCopy), [v.workingCopy])
+  useEffect(() => {
+    updateYamlMarkers(monacoRef.current, yamlModelRef.current, v.workingCopy, validation.errors)
+  }, [v.workingCopy, validation.errors])
   const characterById = useMemo(() => {
     const m: Record<string, BibleCharacter> = {}
     project.bible?.characters.forEach((c) => (m[c.id] = c))
@@ -306,6 +311,14 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
             </div>
           )}
           {lastReviewWarning && <div style={warningBar}>{lastReviewWarning}</div>}
+          {!validation.valid && (
+            <div style={schemaErrorBox}>
+              <strong>Schema 错误</strong>
+              {validation.errors.map((error, index) => (
+                <div key={`${error}-${index}`}>{error}</div>
+              ))}
+            </div>
+          )}
           {!hasContent ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16 }}>
               <p className="muted">第 {state.chapterIndex} 章「{chapter.title}」尚未生成</p>
@@ -321,6 +334,11 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               language="yaml"
               theme="vs-dark"
               value={v.workingCopy}
+              onMount={(editor, monaco) => {
+                monacoRef.current = monaco
+                yamlModelRef.current = editor.getModel()
+                updateYamlMarkers(monaco, editor.getModel(), v.workingCopy, validation.errors)
+              }}
               onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
               options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
             />
@@ -429,6 +447,37 @@ function appendStream(current: StreamOutput | null, kind: StreamOutput['kind'], 
     text: `${current?.text ?? ''}${delta}`,
     done: false,
   }
+}
+
+function updateYamlMarkers(monaco: any, model: any, text: string, errors: string[]) {
+  if (!monaco || !model) return
+  const markers = errors.map((error) => {
+    const line = lineForValidationError(text, error)
+    const content = model.getLineContent(line) || ''
+    return {
+      severity: monaco.MarkerSeverity.Error,
+      message: error,
+      startLineNumber: line,
+      startColumn: 1,
+      endLineNumber: line,
+      endColumn: Math.max(2, content.length + 1),
+    }
+  })
+  monaco.editor.setModelMarkers(model, 'script-schema', markers)
+}
+
+function lineForValidationError(text: string, error: string): number {
+  const yamlLine = error.match(/line\s+(\d+)/i)
+  if (yamlLine) return Math.max(1, Number(yamlLine[1]))
+
+  const path = error.match(/^(\/\S*)/)?.[1]
+  const parts = path?.split('/').filter(Boolean) ?? []
+  const field = parts[parts.length - 1]
+  if (field && Number.isNaN(Number(field))) {
+    const line = text.split('\n').findIndex((value) => value.trim().startsWith(`${field}:`))
+    if (line >= 0) return line + 1
+  }
+  return 1
 }
 
 function collectDeprecatedScriptCharacters(text: string, characterById: Record<string, BibleCharacter>): BibleCharacter[] {
@@ -574,6 +623,14 @@ const warningBar: React.CSSProperties = {
   background: 'rgba(200, 115, 106, 0.12)',
   padding: '8px 14px',
   fontSize: 13,
+}
+const schemaErrorBox: React.CSSProperties = {
+  borderBottom: '1px solid var(--danger)',
+  color: 'var(--danger)',
+  background: 'rgba(200, 115, 106, 0.10)',
+  padding: '8px 14px',
+  fontSize: 12,
+  lineHeight: 1.6,
 }
 const streamPre: React.CSSProperties = {
   margin: 0,
