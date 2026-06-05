@@ -23,8 +23,13 @@ export default function Settings({ config, onSave, onClose }: Props) {
   }
 
   return (
-    <div style={overlay} onClick={onClose}>
-      <div style={modal} className="fade-in" onClick={(e) => e.stopPropagation()}>
+    <div
+      style={overlay}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div style={modal} className="fade-in">
         <h2 style={{ fontSize: 20, marginBottom: 4 }}>模型设置</h2>
         <p className="muted" style={{ fontSize: 12, marginBottom: 20 }}>
           API Key 仅保存在你本地浏览器,直连模型端点,不会上传到任何服务器。
