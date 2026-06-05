@@ -1,9 +1,20 @@
 import { useState, useMemo } from 'react'
 import Editor from '@monaco-editor/react'
-import type { Project, LLMConfig, ChapterScriptState, ChatMessage, Commit } from '../types'
+import type { Project, LLMConfig, ChapterScriptState, ChatMessage, Commit, BibleCharacter } from '../types'
 import { generateScript, editScript } from '../agents'
 import { commit, checkout, history, isDirty, getCommit, createBranch, switchBranch } from '../lib/version'
 import { validateScriptYaml } from '../lib/schema'
+import {
+  collectUnknownScriptCharacters,
+  composeDiffReview,
+  createDiffReview,
+  isReviewComplete,
+  mergeCharacterDraft,
+  reviewHunks,
+  setHunkStatus,
+  type DiffReview,
+  type HunkStatus,
+} from '../lib/diffReview'
 import ScriptPreview from './ScriptPreview'
 import DiffView from './DiffView'
 
@@ -12,16 +23,19 @@ interface Props {
   llm: LLMConfig
   state: ChapterScriptState
   onUpdate: (updater: (s: ChapterScriptState) => ChapterScriptState) => void
+  onProjectUpdate: (updater: (p: Project) => Project) => void
 }
 
 type View = 'preview' | 'code' | 'diff'
 
-export default function Workbench({ project, llm, state, onUpdate }: Props) {
+export default function Workbench({ project, llm, state, onUpdate, onProjectUpdate }: Props) {
   const [view, setView] = useState<View>('preview')
   const [chatInput, setChatInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [diffPair, setDiffPair] = useState<{ old: string; new: string } | null>(null)
-  const [pending, setPending] = useState<{ yaml: string; explanation: string } | null>(null)
+  const [pendingReview, setPendingReview] = useState<DiffReview | null>(null)
+  const [pendingValidation, setPendingValidation] = useState<{ valid: boolean; errors: string[] } | null>(null)
+  const [characterReview, setCharacterReview] = useState<{ hunkId: string; characters: CharacterDraft[] } | null>(null)
 
   const chapter = project.chapters.find((c) => c.index === state.chapterIndex)!
   const v = state.versioning
@@ -79,7 +93,9 @@ export default function Workbench({ project, llm, state, onUpdate }: Props) {
       const { explanation, yaml } = await editScript(v.workingCopy, text, project.bible, llm)
       const aiMsg: ChatMessage = { id: rid(), role: 'assistant', content: explanation, pendingYaml: yaml, timestamp: Date.now() }
       onUpdate((s) => ({ ...s, chat: [...s.chat, aiMsg] }))
-      setPending({ yaml, explanation })
+      const review = createDiffReview(v.workingCopy, yaml, explanation)
+      setPendingReview(review)
+      setPendingValidation(validateScriptYaml(composeDiffReview(review)))
       setDiffPair({ old: v.workingCopy, new: yaml })
       setView('diff')
     } catch (e: any) {
@@ -90,17 +106,69 @@ export default function Workbench({ project, llm, state, onUpdate }: Props) {
     }
   }
 
-  const acceptPending = () => {
-    if (!pending) return
-    onUpdate((s) => ({ ...s, versioning: commit(s.versioning, pending.yaml, '对话修改', 'ai') }))
-    setPending(null)
-    setDiffPair(null)
-    setView('preview')
+  const applyHunkDecision = (hunkId: string, status: HunkStatus, skipCharacterCheck = false) => {
+    if (!pendingReview) return
+    if (status === 'accepted' && !skipCharacterCheck) {
+      const knownIds = new Set(project.bible?.characters.map((c) => c.id) ?? [])
+      const beforeUnknown = new Set(collectUnknownScriptCharacters(composeDiffReview(pendingReview), knownIds).map((c) => c.id))
+      const candidate = composeDiffReview(pendingReview, { [hunkId]: 'accepted' })
+      const proposedById = new Map(
+        collectUnknownScriptCharacters(pendingReview.proposedYaml, knownIds).map((c) => [c.id, c])
+      )
+      const introduced = collectUnknownScriptCharacters(candidate, knownIds)
+        .filter((c) => !beforeUnknown.has(c.id))
+        .map((c) => mergeCharacterDraft(c, proposedById.get(c.id)))
+
+      if (introduced.length) {
+        setCharacterReview({ hunkId, characters: introduced })
+        return
+      }
+    }
+
+    finishHunkDecision(pendingReview, hunkId, status)
   }
-  const rejectPending = () => {
-    setPending(null)
-    setDiffPair(null)
-    setView('preview')
+
+  const finishHunkDecision = (review: DiffReview, hunkId: string, status: HunkStatus) => {
+    const updated = setHunkStatus(review, hunkId, status)
+    const composed = composeDiffReview(updated)
+    setPendingValidation(validateScriptYaml(composed))
+    if (isReviewComplete(updated)) {
+      onUpdate((s) => ({ ...s, versioning: commit(s.versioning, composed, '对话逐块修改', 'ai') }))
+      setPendingReview(null)
+      setPendingValidation(null)
+      setDiffPair(null)
+      setView('preview')
+      return
+    }
+    setPendingReview(updated)
+  }
+
+  const cancelNewCharacter = () => {
+    if (!characterReview || !pendingReview) return
+    const hunkId = characterReview.hunkId
+    setCharacterReview(null)
+    finishHunkDecision(pendingReview, hunkId, 'rejected')
+  }
+
+  const confirmNewCharacter = () => {
+    if (!characterReview || !pendingReview) return
+    const { hunkId, characters } = characterReview
+    onProjectUpdate((p) => {
+      if (!p.bible) return p
+      const existing = new Set(p.bible.characters.map((c) => c.id))
+      return {
+        ...p,
+        bible: {
+          ...p.bible,
+          characters: [
+            ...p.bible.characters,
+            ...characters.filter((c) => !existing.has(c.id)),
+          ],
+        },
+      }
+    })
+    setCharacterReview(null)
+    finishHunkDecision(pendingReview, hunkId, 'accepted')
   }
 
   const doCheckout = (id: string) => onUpdate((s) => ({ ...s, versioning: checkout(s.versioning, id) }))
@@ -153,7 +221,7 @@ export default function Workbench({ project, llm, state, onUpdate }: Props) {
           <div style={{ display: 'flex', gap: 4 }}>
             {(['preview', 'code', 'diff'] as View[]).map((vw) => (
               <button key={vw} className={view === vw ? 'primary small' : 'ghost small'}
-                onClick={() => setView(vw)} disabled={vw === 'diff' && !diffPair}>
+                onClick={() => setView(vw)} disabled={vw === 'diff' && !diffPair && !pendingReview}>
                 {vw === 'preview' ? '预览' : vw === 'code' ? 'YAML' : 'Diff'}
               </button>
             ))}
@@ -185,17 +253,26 @@ export default function Workbench({ project, llm, state, onUpdate }: Props) {
               onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
               options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
             />
+          ) : pendingReview ? (
+            <DiffView
+              oldText={pendingReview.baseYaml}
+              newText={composeDiffReview(pendingReview)}
+              review={pendingReview}
+              warning={pendingValidation && !pendingValidation.valid ? pendingValidation.errors.join('; ') : undefined}
+              onAcceptHunk={(id) => applyHunkDecision(id, 'accepted')}
+              onRejectHunk={(id) => applyHunkDecision(id, 'rejected')}
+            />
           ) : diffPair ? (
             <DiffView oldText={diffPair.old} newText={diffPair.new} />
           ) : null}
         </div>
 
         {/* 待审阅条 */}
-        {pending && (
+        {pendingReview && (
           <div style={pendingBar} className="fade-in">
-            <span style={{ fontSize: 12, flex: 1 }}>AI 改动:{pending.explanation}</span>
-            <button className="ghost small" onClick={rejectPending}>拒绝</button>
-            <button className="primary small" onClick={acceptPending}>接受</button>
+            <span style={{ fontSize: 12, flex: 1 }}>
+              AI 改动:{pendingReview.explanation} · 待处理 {reviewHunks(pendingReview).filter((h) => h.status === 'pending').length}/{reviewHunks(pendingReview).length} 块
+            </span>
           </div>
         )}
       </div>
@@ -233,11 +310,82 @@ export default function Workbench({ project, llm, state, onUpdate }: Props) {
           </button>
         </div>
       </div>
+      {characterReview && (
+        <NewCharacterDialog
+          characters={characterReview.characters}
+          onChange={(characters) => setCharacterReview((r) => (r ? { ...r, characters } : r))}
+          onConfirm={confirmNewCharacter}
+          onCancel={cancelNewCharacter}
+        />
+      )}
     </div>
   )
 }
 
 function rid() { return Math.random().toString(36).slice(2, 10) }
+
+type CharacterDraft = BibleCharacter
+
+const ROLE_LABELS = {
+  protagonist: '主角',
+  antagonist: '反派',
+  supporting: '配角',
+  minor: '龙套',
+} as const
+
+function NewCharacterDialog({
+  characters,
+  onChange,
+  onConfirm,
+  onCancel,
+}: {
+  characters: CharacterDraft[]
+  onChange: (characters: CharacterDraft[]) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const update = (id: string, patch: Partial<CharacterDraft>) => {
+    onChange(characters.map((character) => (character.id === id ? { ...character, ...patch } : character)))
+  }
+
+  return (
+    <div style={modalMask}>
+      <div style={modal}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>发现新角色</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+          这块改动引入了全局人物表中不存在的角色。请确认设定后再接受该块改动。
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {characters.map((character) => (
+            <div key={character.id} style={newCharCard}>
+              <label className="label">角色 id</label>
+              <input value={character.id} readOnly style={{ marginBottom: 8 }} />
+              <label className="label">姓名</label>
+              <input value={character.name} onChange={(e) => update(character.id, { name: e.target.value })} style={{ marginBottom: 8 }} />
+              <label className="label">定位</label>
+              <select value={character.role} onChange={(e) => update(character.id, { role: e.target.value as CharacterDraft['role'] })} style={{ marginBottom: 8 }}>
+                {(Object.keys(ROLE_LABELS) as CharacterDraft['role'][]).map((role) => (
+                  <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                ))}
+              </select>
+              <label className="label">描述</label>
+              <textarea value={character.description} onChange={(e) => update(character.id, { description: e.target.value })} style={{ minHeight: 64, marginBottom: 8 }} />
+              <label className="label">特征</label>
+              <input
+                value={character.traits.join('、')}
+                onChange={(e) => update(character.id, { traits: e.target.value.split(/[、,，]/).map((v) => v.trim()).filter(Boolean) })}
+              />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel}>取消并拒绝该块</button>
+          <button className="primary" onClick={onConfirm}>确认并接受</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const layout: React.CSSProperties = { display: 'grid', gridTemplateColumns: '230px 1fr 300px', height: '100%', overflow: 'hidden' }
 const paneBase: React.CSSProperties = { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }
@@ -256,3 +404,29 @@ const pendingBar: React.CSSProperties = {
 const bubble: React.CSSProperties = { padding: '8px 12px', borderRadius: 8, fontSize: 13, maxWidth: '90%', whiteSpace: 'pre-wrap' }
 const userBubble: React.CSSProperties = { alignSelf: 'flex-end', background: 'var(--ink)', color: '#1a1a1a' }
 const aiBubble: React.CSSProperties = { alignSelf: 'flex-start', background: 'var(--bg-elev)', border: '1px solid var(--border)' }
+const modalMask: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 20,
+  background: 'rgba(0, 0, 0, 0.55)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 24,
+}
+const modal: React.CSSProperties = {
+  width: 'min(560px, 100%)',
+  maxHeight: '90vh',
+  overflow: 'auto',
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 8,
+  boxShadow: 'var(--shadow)',
+  padding: 18,
+}
+const newCharCard: React.CSSProperties = {
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  padding: 12,
+  background: 'var(--bg-panel-2)',
+}
