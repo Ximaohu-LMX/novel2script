@@ -28,7 +28,7 @@ interface Props {
 
 type View = 'preview' | 'code' | 'diff'
 type StreamOutput = {
-  kind: 'generate' | 'edit'
+  kind: 'edit'
   title: string
   text: string
   done: boolean
@@ -77,7 +77,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
   const generate = async () => {
     if (!project.bible) return
     setBusy(true)
-    setStreamOutput({ kind: 'generate', title: '生成剧本初稿', text: '', done: false })
+    setStreamOutput(null)
     onUpdate((s) => ({ ...s, status: 'generating', error: undefined }))
     try {
       const prevState = project.chapterStates[state.chapterIndex - 1]
@@ -85,12 +85,7 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         ? `(上一章已生成剧本)`
         : ''
       const { yaml, valid, errors } = await generateScript(
-        chapter,
-        project.bible,
-        project.styleConfig,
-        prevSummary,
-        llm,
-        (delta) => setStreamOutput((current) => appendStream(current, 'generate', '生成剧本初稿', delta))
+        chapter, project.bible, project.styleConfig, prevSummary, llm
       )
       onUpdate((s) => ({
         ...s,
@@ -98,10 +93,8 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
         error: valid ? undefined : errors.join('; '),
         versioning: commit(s.versioning, yaml, `生成第${state.chapterIndex}章初稿`, 'ai'),
       }))
-      setStreamOutput((current) => current ? { ...current, done: true, title: valid ? '生成完成' : '生成完成,但 Schema 有错误' } : current)
     } catch (e: any) {
       onUpdate((s) => ({ ...s, status: 'error', error: e.message }))
-      setStreamOutput((current) => current ? { ...current, done: true, title: `生成出错:${e.message}` } : current)
     } finally {
       setBusy(false)
     }
@@ -319,25 +312,18 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               <button className="primary" disabled={busy} onClick={generate}>
                 {busy ? <><span className="spinner" /> &nbsp;生成中…</> : '生成剧本初稿'}
               </button>
-              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
             </div>
           ) : view === 'preview' ? (
-            <>
-              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
-              <ScriptPreview yamlText={v.workingCopy} charNames={charNames} />
-            </>
+            <ScriptPreview yamlText={v.workingCopy} charNames={charNames} />
           ) : view === 'code' ? (
-            <>
-              {streamOutput?.kind === 'generate' && <StreamPanel output={streamOutput} />}
-              <Editor
-                height="100%"
-                language="yaml"
-                theme="vs-dark"
-                value={v.workingCopy}
-                onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
-                options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
-              />
-            </>
+            <Editor
+              height="100%"
+              language="yaml"
+              theme="vs-dark"
+              value={v.workingCopy}
+              onChange={(val) => onUpdate((s) => ({ ...s, versioning: { ...s.versioning, workingCopy: val ?? '' } }))}
+              options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on' }}
+            />
           ) : pendingReview ? (
             <DiffView
               oldText={pendingReview.baseYaml}
@@ -443,17 +429,6 @@ function appendStream(current: StreamOutput | null, kind: StreamOutput['kind'], 
     text: `${current?.text ?? ''}${delta}`,
     done: false,
   }
-}
-
-function StreamPanel({ output }: { output: StreamOutput }) {
-  return (
-    <div style={streamPanel}>
-      <div style={streamHeader}>
-        <span>{output.done ? output.title : <><span className="spinner" /> &nbsp;{output.title}</>}</span>
-      </div>
-      <pre style={streamPre}>{output.text || '等待模型返回...'}</pre>
-    </div>
-  )
 }
 
 function collectDeprecatedScriptCharacters(text: string, characterById: Record<string, BibleCharacter>): BibleCharacter[] {
@@ -599,22 +574,6 @@ const warningBar: React.CSSProperties = {
   background: 'rgba(200, 115, 106, 0.12)',
   padding: '8px 14px',
   fontSize: 13,
-}
-const streamPanel: React.CSSProperties = {
-  width: 'min(860px, calc(100% - 32px))',
-  maxHeight: 300,
-  overflow: 'hidden',
-  border: '1px solid var(--border)',
-  borderRadius: 8,
-  background: 'var(--bg-panel)',
-  boxShadow: 'var(--shadow)',
-}
-const streamHeader: React.CSSProperties = {
-  padding: '8px 10px',
-  borderBottom: '1px solid var(--border)',
-  color: 'var(--text-dim)',
-  fontSize: 12,
-  fontWeight: 700,
 }
 const streamPre: React.CSSProperties = {
   margin: 0,
