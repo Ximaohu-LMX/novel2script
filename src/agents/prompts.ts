@@ -29,7 +29,8 @@ export function buildSplitPrompt(rawText: string): { system: string; user: strin
 export function buildBiblePrompt(chunk: string): { system: string; user: string } {
   const system = `你是剧本改编的设定分析助手。请从给定的小说文本片段中抽取人物、场景地点与世界观设定。
 要求:
-- 人物:给出名字、可能的别称、角色定位(protagonist主角/antagonist反派/supporting配角/minor龙套)、外貌性格描述、性格特征标签。
+- 人物:给出名字、可能的别称、角色定位(protagonist主角/antagonist反派/supporting配角/minor龙套)、详实的人物描述、性格特征标签。
+- 人物 description 要尽量充实,包含年龄段、身份/经历、外貌特征(身形、面容、发型等)、标志性细节(疤痕、惯常衣着、随身物等)和与剧情相关的关键信息;不要只写一句概括。例如:"失忆的前私家侦探,三十出头,面容清瘦,眼窝微陷,透着疲惫与迷茫,右手腕有一道陈年疤痕。十年前车祸后记忆全失,唯一记得自己曾是侦探。"
 - 地点:按"大场景/小场景"层级整理。大场景是宅邸、学校、城市街区等稳定空间;小场景是书房、走廊、咖啡馆包间等具体可拍摄空间。若无法细分,subLocations 为空数组。
 - 世界观:背景设定、时代、特殊规则等(若有)。
 - 严格只输出 JSON,不要解释文字或 Markdown 围栏。
