@@ -48,6 +48,15 @@ export function findProjectReferences(project: Project, target: ReferenceTarget)
       })
     }
 
+    script.characters?.forEach((character, index) => {
+      if (target.includeText && character.name?.includes(target.value)) {
+        refs.push(makeRef(chapter, undefined, undefined, `characters[${index}].name`, character.name, `/characters/${index}/name`))
+      }
+      if (target.includeText && character.description?.includes(target.value)) {
+        refs.push(makeRef(chapter, undefined, undefined, `characters[${index}].description`, character.description, `/characters/${index}/description`))
+      }
+    })
+
     TEXT_FIELDS.forEach((field) => {
       const value = script[field]
       if (target.includeText && typeof value === 'string' && value.includes(target.value)) {

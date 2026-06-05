@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { Project, LLMConfig, StoryBible, BibleCharacter, BibleLocation, BibleSubLocation, CharacterRole } from '../types'
 import { extractBible } from '../agents'
-import { findProjectReferences, type ScriptReference } from '../lib/references'
+import { commit } from '../lib/version'
+import { findProjectReferences, replaceProjectTextReferences, type ScriptReference } from '../lib/references'
 
 interface Props {
   project: Project
@@ -18,6 +19,8 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const [error, setError] = useState('')
   const [showDeprecated, setShowDeprecated] = useState(false)
   const [blockedDelete, setBlockedDelete] = useState<{ title: string; refs: ScriptReference[] } | null>(null)
+  const [focusedName, setFocusedName] = useState<{ kind: 'character' | 'location'; id: string; name: string } | null>(null)
+  const [renameFlow, setRenameFlow] = useState<RenameFlow | null>(null)
   const bible = project.bible
   const activeCharacters = bible?.characters.filter((c) => !c.deprecated) ?? []
   const deprecatedCharacters = bible?.characters.filter((c) => c.deprecated) ?? []
@@ -131,6 +134,67 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
       }),
     }))
 
+  const handleNameBlur = (kind: 'character' | 'location', id: string, newName: string) => {
+    if (!focusedName || focusedName.kind !== kind || focusedName.id !== id) return
+    const oldName = focusedName.name.trim()
+    const nextName = newName.trim()
+    setFocusedName(null)
+    if (!oldName || !nextName || oldName === nextName) return
+    setRenameFlow({ step: 'confirm', kind, oldName, newName: nextName, refs: [], selected: new Set() })
+  }
+
+  const scanRenameReferences = () => {
+    if (!renameFlow) return
+    const refs = findProjectReferences(
+      project,
+      renameFlow.kind === 'character'
+        ? { kind: 'text', value: renameFlow.oldName, includeText: true }
+        : { kind: 'location', value: renameFlow.oldName, includeText: true }
+    )
+    setRenameFlow({
+      ...renameFlow,
+      step: 'review',
+      refs,
+      selected: new Set(refs.map(refKey)),
+    })
+  }
+
+  const toggleRenameRef = (key: string) => {
+    if (!renameFlow) return
+    const selected = new Set(renameFlow.selected)
+    selected.has(key) ? selected.delete(key) : selected.add(key)
+    setRenameFlow({ ...renameFlow, selected })
+  }
+
+  const applyRenameReplacements = () => {
+    if (!renameFlow) return
+    const replacements = renameFlow.refs
+      .filter((ref) => renameFlow.selected.has(refKey(ref)))
+      .map((ref) => ({
+        chapterIndex: ref.chapterIndex,
+        path: ref.path,
+        from: renameFlow.oldName,
+        to: renameFlow.newName,
+      }))
+    const yamlByChapter = replaceProjectTextReferences(project, replacements)
+    onUpdate((p) => ({
+      ...p,
+      chapterStates: Object.entries(yamlByChapter).reduce((states, [idx, yaml]) => {
+        const chapterIndex = Number(idx)
+        const current = states[chapterIndex]
+        if (!current) return states
+        return {
+          ...states,
+          [chapterIndex]: {
+            ...current,
+            versioning: commit(current.versioning, yaml, `批量改名:${renameFlow.oldName}→${renameFlow.newName}`, 'user'),
+          },
+        }
+      }, p.chapterStates),
+    }))
+    setRenameFlow(null)
+  }
+
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -159,7 +223,10 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
             {activeCharacters.map((c) => (
               <div key={c.id} style={card}>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                  <input value={c.name} onChange={(e) => updateChar(c.id, { name: e.target.value })}
+                  <input value={c.name}
+                    onFocus={() => setFocusedName({ kind: 'character', id: c.id, name: c.name })}
+                    onBlur={(e) => handleNameBlur('character', c.id, e.target.value)}
+                    onChange={(e) => updateChar(c.id, { name: e.target.value })}
                     style={{ fontFamily: 'var(--serif)', fontWeight: 700, color: 'var(--ink)' }} />
                   <select value={c.role} onChange={(e) => updateChar(c.id, { role: e.target.value as CharacterRole })}
                     style={{ width: 'auto' }}>
@@ -196,6 +263,8 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
                   <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <input
                       value={location.name}
+                      onFocus={() => setFocusedName({ kind: 'location', id: location.id, name: location.name })}
+                      onBlur={(e) => handleNameBlur('location', location.id, e.target.value)}
                       onChange={(e) => updateLocation(location.id, { name: e.target.value })}
                       style={{ fontFamily: 'var(--serif)', fontWeight: 700, color: 'var(--ink)' }}
                     />
@@ -291,6 +360,103 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
           onClose={() => setBlockedDelete(null)}
         />
       )}
+      {renameFlow && (
+        <RenameDialog
+          flow={renameFlow}
+          onScan={scanRenameReferences}
+          onOnlySetting={() => setRenameFlow(null)}
+          onToggleRef={toggleRenameRef}
+          onConfirm={applyRenameReplacements}
+          onCancel={() => setRenameFlow(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+type RenameFlow = {
+  step: 'confirm' | 'review'
+  kind: 'character' | 'location'
+  oldName: string
+  newName: string
+  refs: ScriptReference[]
+  selected: Set<string>
+}
+
+function refKey(ref: ScriptReference): string {
+  return `${ref.chapterIndex}:${ref.path}`
+}
+
+function RenameDialog({
+  flow,
+  onScan,
+  onOnlySetting,
+  onToggleRef,
+  onConfirm,
+  onCancel,
+}: {
+  flow: RenameFlow
+  onScan: () => void
+  onOnlySetting: () => void
+  onToggleRef: (key: string) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  if (flow.step === 'confirm') {
+    return (
+      <div style={modalMask}>
+        <div style={modal}>
+          <h2 style={{ fontSize: 18, marginBottom: 8 }}>确认改名</h2>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+            已将「{flow.oldName}」改为「{flow.newName}」。是否同时替换剧本正文中出现的旧名字?
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button className="ghost" onClick={onOnlySetting}>仅改设定</button>
+            <button className="primary" onClick={onScan}>扫描并查看</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={modalMask}>
+      <div style={modal}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>选择替换位置</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          将「{flow.oldName}」替换为「{flow.newName}」。默认全部勾选,可取消容易误伤的位置。
+        </p>
+        {flow.refs.length === 0 ? (
+          <p className="faint" style={{ fontSize: 12 }}>未在已生成章节中找到旧名字。</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflow: 'auto' }}>
+            {flow.refs.map((ref) => {
+              const key = refKey(ref)
+              return (
+                <label key={key} style={renameRefRow}>
+                  <input
+                    type="checkbox"
+                    checked={flow.selected.has(key)}
+                    onChange={() => onToggleRef(key)}
+                    style={{ width: 'auto', marginTop: 2 }}
+                  />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <strong>第{ref.chapterIndex}章 {ref.chapterTitle}</strong>
+                    <span className="faint" style={{ fontSize: 12 }}>
+                      {ref.sceneId ? `场景 ${ref.sceneId} · ` : ''}{ref.field}
+                    </span>
+                    <span style={{ fontSize: 12 }}>{ref.text}</span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button className="ghost" onClick={onCancel}>取消</button>
+          <button className="primary" onClick={onConfirm} disabled={flow.selected.size === 0}>确认替换</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -374,4 +540,15 @@ const refRow: React.CSSProperties = {
   borderRadius: 6,
   padding: 8,
   background: 'var(--bg-panel-2)',
+}
+
+const renameRefRow: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr',
+  gap: 8,
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  padding: 8,
+  background: 'var(--bg-panel-2)',
+  cursor: 'pointer',
 }
