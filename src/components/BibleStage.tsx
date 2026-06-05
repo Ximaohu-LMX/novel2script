@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Project, LLMConfig, StoryBible, BibleCharacter, BibleLocation, BibleSubLocation, CharacterRole } from '../types'
 import { extractBible } from '../agents'
+import { findProjectReferences, type ScriptReference } from '../lib/references'
 
 interface Props {
   project: Project
@@ -15,7 +16,13 @@ const ROLE_LABEL: Record<CharacterRole, string> = {
 export default function BibleStage({ project, llm, onUpdate }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [showDeprecated, setShowDeprecated] = useState(false)
+  const [blockedDelete, setBlockedDelete] = useState<{ title: string; refs: ScriptReference[] } | null>(null)
   const bible = project.bible
+  const activeCharacters = bible?.characters.filter((c) => !c.deprecated) ?? []
+  const deprecatedCharacters = bible?.characters.filter((c) => c.deprecated) ?? []
+  const activeLocations = bible?.locations.filter((location) => !location.deprecated) ?? []
+  const deprecatedLocations = bible?.locations.filter((location) => location.deprecated) ?? []
 
   const analyze = async () => {
     setBusy(true)
@@ -37,8 +44,16 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
   const updateChar = (id: string, patch: Partial<BibleCharacter>) =>
     patchBible((b) => ({ ...b, characters: b.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
 
-  const removeChar = (id: string) =>
-    patchBible((b) => ({ ...b, characters: b.characters.filter((c) => c.id !== id) }))
+  const deprecateChar = (id: string) => updateChar(id, { deprecated: true })
+  const restoreChar = (id: string) => updateChar(id, { deprecated: false })
+  const purgeChar = (character: BibleCharacter) => {
+    const refs = findProjectReferences(project, { kind: 'character', value: character.id })
+    if (refs.length) {
+      setBlockedDelete({ title: `角色「${character.name}」仍被剧本引用`, refs })
+      return
+    }
+    patchBible((b) => ({ ...b, characters: b.characters.filter((c) => c.id !== character.id) }))
+  }
 
   const addChar = () =>
     patchBible((b) => ({
@@ -57,8 +72,16 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
       )),
     }))
 
-  const removeLocation = (id: string) =>
-    patchBible((b) => ({ ...b, locations: b.locations.filter((location) => location.id !== id) }))
+  const deprecateLocation = (id: string) => updateLocation(id, { deprecated: true })
+  const restoreLocation = (id: string) => updateLocation(id, { deprecated: false })
+  const purgeLocation = (location: BibleLocation) => {
+    const refs = findProjectReferences(project, { kind: 'location', value: location.name, includeText: true })
+    if (refs.length) {
+      setBlockedDelete({ title: `地点「${location.name}」仍被剧本引用`, refs })
+      return
+    }
+    patchBible((b) => ({ ...b, locations: b.locations.filter((item) => item.id !== location.id) }))
+  }
 
   const addLocation = () =>
     patchBible((b) => ({
@@ -129,11 +152,11 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
         <div className="fade-in">
           {/* 人物 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '24px 0 12px' }}>
-            <h2 style={{ fontSize: 18 }}>人物 · {bible.characters.length}</h2>
+            <h2 style={{ fontSize: 18 }}>人物 · {activeCharacters.length}</h2>
             <button className="ghost small" onClick={addChar}>+ 添加人物</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-            {bible.characters.map((c) => (
+            {activeCharacters.map((c) => (
               <div key={c.id} style={card}>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <input value={c.name} onChange={(e) => updateChar(c.id, { name: e.target.value })}
@@ -150,7 +173,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
                 <input value={c.traits.join('、')} onChange={(e) => updateChar(c.id, { traits: e.target.value.split(/[、,，]/).filter(Boolean) })}
                   placeholder="性格标签(顿号分隔)" style={{ fontSize: 12, marginBottom: 6 }} />
                 {c.aliases.length > 0 && <p className="faint" style={{ fontSize: 11 }}>别称:{c.aliases.join('、')}</p>}
-                <button className="ghost small danger" style={{ marginTop: 8 }} onClick={() => removeChar(c.id)}>删除</button>
+                <button className="ghost small danger" style={{ marginTop: 8 }} onClick={() => deprecateChar(c.id)}>标记弃用</button>
               </div>
             ))}
           </div>
@@ -162,11 +185,11 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
 
           {/* 地点 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '24px 0 12px' }}>
-            <h2 style={{ fontSize: 18 }}>主要场景 · {bible.locations.length}</h2>
+            <h2 style={{ fontSize: 18 }}>主要场景 · {activeLocations.length}</h2>
             <button className="ghost small" onClick={addLocation}>+ 添加大场景</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {bible.locations.map((location) => {
+            {activeLocations.map((location) => {
               const subLocations = location.subLocations ?? []
               return (
                 <div key={location.id} style={card}>
@@ -176,7 +199,7 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
                       onChange={(e) => updateLocation(location.id, { name: e.target.value })}
                       style={{ fontFamily: 'var(--serif)', fontWeight: 700, color: 'var(--ink)' }}
                     />
-                    <button className="ghost small danger" style={{ width: 'auto' }} onClick={() => removeLocation(location.id)}>删除</button>
+                    <button className="ghost small danger" style={{ width: 'auto' }} onClick={() => deprecateLocation(location.id)}>标记弃用</button>
                   </div>
                   <textarea
                     value={location.description}
@@ -214,7 +237,41 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
                 </div>
               )
             })}
-            {bible.locations.length === 0 && <p className="faint" style={{ fontSize: 12 }}>暂无场景。可手动添加大场景与小场景。</p>}
+            {activeLocations.length === 0 && <p className="faint" style={{ fontSize: 12 }}>暂无场景。可手动添加大场景与小场景。</p>}
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <button className="ghost small" onClick={() => setShowDeprecated((v) => !v)}>
+              {showDeprecated ? '隐藏已弃用' : `已弃用 · ${deprecatedCharacters.length + deprecatedLocations.length}`}
+            </button>
+            {showDeprecated && (
+              <div style={deprecatedPanel}>
+                <h2 style={{ fontSize: 16, marginBottom: 10 }}>已弃用</h2>
+                {deprecatedCharacters.length === 0 && deprecatedLocations.length === 0 && (
+                  <p className="faint" style={{ fontSize: 12 }}>暂无已弃用的角色或地点。</p>
+                )}
+                {deprecatedCharacters.map((character) => (
+                  <div key={character.id} style={deprecatedRow}>
+                    <div style={{ flex: 1 }}>
+                      <strong>{character.name}</strong>
+                      <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>{character.id}</span>
+                    </div>
+                    <button className="ghost small" onClick={() => restoreChar(character.id)}>恢复</button>
+                    <button className="ghost small danger" onClick={() => purgeChar(character)}>彻底删除</button>
+                  </div>
+                ))}
+                {deprecatedLocations.map((location) => (
+                  <div key={location.id} style={deprecatedRow}>
+                    <div style={{ flex: 1 }}>
+                      <strong>{location.name}</strong>
+                      <span className="faint" style={{ fontSize: 12, marginLeft: 8 }}>地点</span>
+                    </div>
+                    <button className="ghost small" onClick={() => restoreLocation(location.id)}>恢复</button>
+                    <button className="ghost small danger" onClick={() => purgeLocation(location)}>彻底删除</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 28 }}>
@@ -227,6 +284,38 @@ export default function BibleStage({ project, llm, onUpdate }: Props) {
           </div>
         </div>
       )}
+      {blockedDelete && (
+        <BlockedDeleteDialog
+          title={blockedDelete.title}
+          refs={blockedDelete.refs}
+          onClose={() => setBlockedDelete(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function BlockedDeleteDialog({ title, refs, onClose }: { title: string; refs: ScriptReference[]; onClose: () => void }) {
+  return (
+    <div style={modalMask}>
+      <div style={modal}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>无法彻底删除</h2>
+        <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>{title}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflow: 'auto' }}>
+          {refs.map((ref, index) => (
+            <div key={`${ref.chapterIndex}-${ref.path}-${index}`} style={refRow}>
+              <strong>第{ref.chapterIndex}章 {ref.chapterTitle}</strong>
+              <span className="faint" style={{ fontSize: 12 }}>
+                {ref.sceneId ? `场景 ${ref.sceneId} · ` : ''}{ref.field}
+              </span>
+              <span style={{ fontSize: 12 }}>{ref.text}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="primary" onClick={onClose}>知道了</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -237,4 +326,52 @@ const card: React.CSSProperties = {
 
 const subLocationCard: React.CSSProperties = {
   background: 'var(--bg-panel-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 10,
+}
+
+const deprecatedPanel: React.CSSProperties = {
+  marginTop: 10,
+  border: '1px solid var(--border)',
+  borderRadius: 8,
+  padding: 12,
+  background: 'var(--bg-panel)',
+}
+
+const deprecatedRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  borderTop: '1px solid var(--border)',
+  padding: '10px 0',
+}
+
+const modalMask: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 20,
+  background: 'rgba(0, 0, 0, 0.55)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 24,
+}
+
+const modal: React.CSSProperties = {
+  width: 'min(640px, 100%)',
+  maxHeight: '90vh',
+  overflow: 'auto',
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 8,
+  boxShadow: 'var(--shadow)',
+  padding: 18,
+}
+
+const refRow: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  padding: 8,
+  background: 'var(--bg-panel-2)',
 }

@@ -98,7 +98,7 @@ function collectSceneReferences(
     refs.push(makeRef(chapter, scene, sceneIndex, 'heading.location', scene.heading.location, `/scenes/${sceneIndex}/heading/location`))
   }
 
-  if (target.includeText && target.kind === 'location' && scene.heading?.location?.includes(target.value)) {
+  if (target.includeText && target.kind === 'location' && scene.heading?.location?.includes(target.value) && scene.heading.location !== target.value) {
     refs.push(makeRef(chapter, scene, sceneIndex, 'heading.location', scene.heading.location, `/scenes/${sceneIndex}/heading/location`))
   }
 

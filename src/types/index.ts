@@ -58,6 +58,7 @@ export interface BibleCharacter {
   role: CharacterRole
   description: string
   traits: string[]
+  deprecated?: boolean
 }
 
 export interface BibleSubLocation {
@@ -71,6 +72,7 @@ export interface BibleLocation {
   name: string
   description: string
   subLocations: BibleSubLocation[]
+  deprecated?: boolean
 }
 
 export interface StoryBible {

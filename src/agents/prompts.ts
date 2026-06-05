@@ -46,11 +46,13 @@ export function buildScriptPrompt(
   style: StyleConfig,
   prevSummary: string
 ): { system: string; user: string } {
-  const charList = bible.characters
+  const activeCharacters = bible.characters.filter((c) => !c.deprecated)
+  const activeLocations = bible.locations.filter((location) => !location.deprecated)
+  const charList = activeCharacters
     .map((c) => `  - id: ${c.id} | ${c.name}(${c.role})${c.aliases.length ? ' 别称:' + c.aliases.join('、') : ''}`)
     .join('\n')
-  const locationList = bible.locations.length
-    ? bible.locations.map((location) => {
+  const locationList = activeLocations.length
+    ? activeLocations.map((location) => {
       const subs = location.subLocations ?? []
       if (!subs.length) return `  - ${location.name}: ${location.description || '无描述'}`
       return [
@@ -130,7 +132,7 @@ export function buildEditPrompt(
   instruction: string,
   bible: StoryBible
 ): { system: string; user: string } {
-  const charList = bible.characters.map((c) => `${c.id}=${c.name}`).join(', ')
+  const charList = bible.characters.filter((c) => !c.deprecated).map((c) => `${c.id}=${c.name}`).join(', ')
   const system = `你是剧本编辑助手。用户会给你一段现有的剧本章节 YAML 和一条修改指令。
 请根据指令修改剧本,并输出【修改后的完整章节 YAML】(不是 diff,是完整内容)。
 要求:
