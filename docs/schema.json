@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Novel-to-Script YAML Schema",
+  "type": "object",
+  "required": [
+    "title",
+    "logline",
+    "source",
+    "characters",
+    "scenes"
+  ],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "logline": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "novel_title",
+        "total_chapters"
+      ],
+      "properties": {
+        "novel_title": {
+          "type": "string"
+        },
+        "total_chapters": {
+          "type": "integer"
+        }
+      }
+    },
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "description",
+          "traits"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "protagonist",
+              "antagonist",
+              "supporting",
+              "minor"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "chapter_ref",
+          "heading",
+          "synopsis",
+          "characters_present",
+          "elements"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chapter_ref": {
+            "type": "integer"
+          },
+          "heading": {
+            "type": "object",
+            "required": [
+              "location_type",
+              "location",
+              "time"
+            ],
+            "properties": {
+              "location_type": {
+                "enum": [
+                  "INT",
+                  "EXT"
+                ]
+              },
+              "location": {
+                "type": "string"
+              },
+              "time": {
+                "enum": [
+                  "DAY",
+                  "NIGHT",
+                  "DAWN",
+                  "DUSK",
+                  "CONTINUOUS"
+                ]
+              }
+            }
+          },
+          "synopsis": {
+            "type": "string"
+          },
+          "characters_present": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "action",
+                    "dialogue",
+                    "transition",
+                    "parenthetical"
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                },
+                "character": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "string"
+                },
+                "emotion": {
+                  "type": "string"
+                },
+                "transition": {
+                  "enum": [
+                    "CUT TO",
+                    "FADE OUT",
+                    "DISSOLVE TO"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

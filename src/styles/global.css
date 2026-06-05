@@ -1,0 +1,128 @@
+/* ===== 墨改 · AI 小说转剧本 — 编辑器美学 ===== */
+/* 设计方向:深色"剧本工作台",暖墨配青灰,衬线标题 + 等宽正文,克制而专业 */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #14161a;
+  --bg-panel: #1b1e24;
+  --bg-panel-2: #20242b;
+  --bg-elev: #262b33;
+  --border: #2f343d;
+  --border-strong: #3c424d;
+  --text: #e8e6e0;
+  --text-dim: #a3a39c;
+  --text-faint: #6b6e75;
+  --ink: #d9c9a8;          /* 暖墨主色 */
+  --ink-bright: #ecd9b0;
+  --accent: #6fa8a0;        /* 青灰强调 */
+  --accent-bright: #8fc9c0;
+  --danger: #c8736a;
+  --added: #3a6b4d;
+  --added-text: #9fe0b6;
+  --removed: #6b3a3a;
+  --removed-text: #e6a3a3;
+  --serif: 'Noto Serif SC', serif;
+  --sans: 'Noto Sans SC', sans-serif;
+  --mono: 'JetBrains Mono', 'Noto Sans SC', monospace;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 纸纹背景 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 20% 30%, rgba(217, 201, 168, 0.015), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(111, 168, 160, 0.015), transparent 40%);
+  z-index: 0;
+}
+
+h1, h2, h3 { font-family: var(--serif); font-weight: 700; color: var(--ink); }
+
+button {
+  font-family: var(--sans);
+  cursor: pointer;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+button:hover:not(:disabled) { border-color: var(--ink); color: var(--ink-bright); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+button.primary {
+  background: var(--ink);
+  color: #1a1a1a;
+  border-color: var(--ink);
+  font-weight: 700;
+}
+button.primary:hover:not(:disabled) { background: var(--ink-bright); color: #000; }
+
+button.accent { border-color: var(--accent); color: var(--accent-bright); }
+button.ghost { background: transparent; border-color: var(--border); }
+button.small { padding: 4px 10px; font-size: 12px; }
+button.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+input, textarea, select {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  width: 100%;
+}
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; line-height: 1.6; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+.label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; display: block; font-weight: 500; }
+.muted { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.tag.ai { color: var(--accent-bright); border-color: var(--accent); }
+.tag.user { color: var(--ink); border-color: var(--ink); }
+
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.fade-in { animation: fadeIn 0.25s ease; }
