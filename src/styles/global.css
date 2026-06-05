@@ -77,6 +77,8 @@ button.primary {
 button.primary:hover:not(:disabled) { background: var(--ink-bright); color: #000; }
 
 button.accent { border-color: var(--accent); color: var(--accent-bright); }
+button.primary.accent { border-color: var(--ink); color: #1a1a1a; }
+button.primary.accent:hover:not(:disabled) { color: #000; }
 button.ghost { background: transparent; border-color: var(--border); }
 button.small { padding: 4px 10px; font-size: 12px; }
 button.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
