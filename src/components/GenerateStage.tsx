@@ -148,6 +148,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
         llm={llm}
         state={activeState}
         onUpdate={(updater) => updateChapterState(active, updater)}
+        onProjectUpdate={onUpdate}
       />
     </div>
   )
