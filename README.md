@@ -19,7 +19,7 @@ React + TypeScript + Vite + Monaco Editor + IndexedDB。无后端，项目数据
 
 ## 使用方式
 
-评委可直接打开已配置好的在线演示地址：
+直接打开已配置好的在线演示地址：
 
 https://ximaohu-lmx.github.io/novel2script/
 

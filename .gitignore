@@ -3,3 +3,4 @@ dist
 tsconfig.tsbuildinfo
 *.local
 .DS_Store
+.vite/
