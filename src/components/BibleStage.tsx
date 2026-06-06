@@ -479,7 +479,9 @@ function RenameDialog({
           将「{flow.oldName}」替换为「{flow.newName}」。默认全部勾选,可取消容易误伤的位置。
         </p>
         {flow.refs.length === 0 ? (
-          <p className="faint" style={{ fontSize: 12 }}>未在已生成章节中找到旧名字。</p>
+          <p className="faint" style={{ fontSize: 12 }}>
+            未在已生成章节中找到旧名字。设定名称已更新,可直接完成。
+          </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflow: 'auto' }}>
             {flow.refs.map((ref) => {
@@ -506,7 +508,9 @@ function RenameDialog({
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button className="ghost" onClick={onCancel}>取消</button>
-          <button className="primary" onClick={onConfirm} disabled={flow.selected.size === 0}>确认替换</button>
+          <button className="primary" onClick={onConfirm} disabled={flow.refs.length > 0 && flow.selected.size === 0}>
+            {flow.refs.length === 0 ? '完成' : '确认替换'}
+          </button>
         </div>
       </div>
     </div>
