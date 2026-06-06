@@ -59,6 +59,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
     setBatchBusy(true)
     const indices = [...selected].sort((a, b) => a - b)
     let done = 0
+    setBatchProgress(`0/${indices.length}`)
     const concurrency = Math.max(1, llm.maxConcurrency)
     const queue = [...indices]
 
@@ -141,7 +142,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
             onClick={toggleSelectAll}>{allSelected ? '取消全选' : '全选'}</button>
           <button className="primary" style={{ width: '100%' }} disabled={selected.size === 0 || batchBusy}
             onClick={batchGenerate}>
-            {batchBusy ? `批量生成 ${batchProgress}` : `批量生成 (${selected.size})`}
+            {batchBusy ? <><span className="spinner" /> &nbsp;批量生成中... {batchProgress}</> : `批量生成 (${selected.size})`}
           </button>
           <ExportButtons project={project} />
         </div>
