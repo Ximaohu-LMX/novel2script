@@ -15,28 +15,24 @@
 
 ## 技术栈
 
-React + TypeScript + Vite + Monaco Editor + IndexedDB。无后端，可直接部署到 GitHub Pages。
+React + TypeScript + Vite + Monaco Editor + IndexedDB。无后端，项目数据保存在浏览器本地。
 
-## 本地运行
+## 使用方式
 
-需要 Node.js 18+。
+评委可直接打开已配置好的在线演示地址：
+
+https://ximaohu-lmx.github.io/novel2script/
+
+首次使用请点右上角「模型设置」，填入可用的模型接口信息和 API Key。
+
+如需在本地运行，请使用 Node.js 18+ 执行：
 
 ```bash
 npm install
 npm run dev
 ```
 
-打开终端提示的地址（通常是 `http://localhost:5173`）。首次使用请点右上角「模型设置」，填入你的 API Key。
-
-## 部署到 GitHub Pages
-
-仓库已内置 GitHub Actions 工作流（`.github/workflows/deploy.yml`）：
-
-1. 把代码推送到 GitHub 仓库的 `main` 分支。
-2. 在仓库 `Settings → Pages → Build and deployment → Source` 选择 **GitHub Actions**。
-3. 推送后会自动构建并部署，完成后在 Actions 日志或 Pages 设置里可看到访问网址。
-
-也可手动构建：`npm run build`，将 `dist/` 目录内容部署到任意静态托管。
+打开终端提示的地址（通常是 `http://localhost:5173`）即可使用。
 
 ## 模型配置
 
