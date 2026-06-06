@@ -60,8 +60,14 @@ export async function splitChapters(rawText: string, config: LLMConfig): Promise
 
 interface RawBible {
   characters: { name: string; aliases: string[]; role: string; description: string; traits: string[] }[]
-  locations: { name: string; description: string }[]
+  locations: { name: string; description: string; subLocations?: { name: string; description: string }[] }[]
   worldview: string
+}
+
+interface ReducedLocation {
+  name: string
+  description: string
+  subLocations: { name: string; description: string }[]
 }
 
 function chunkText(chapters: Chapter[], maxLen = 6000): string[] {
@@ -103,7 +109,7 @@ export async function extractBible(
 
   // reduce:合并去重
   const charMap = new Map<string, BibleCharacter>()
-  const locMap = new Map<string, { name: string; description: string }>()
+  const locMap = new Map<string, ReducedLocation>()
   let worldview = ''
 
   const normalizeRole = (r: string): CharacterRole => {
@@ -138,13 +144,36 @@ export async function extractBible(
     }
     for (const l of p.locations ?? []) {
       const key = l.name?.trim()
-      if (key && !locMap.has(key)) locMap.set(key, { name: key, description: l.description ?? '' })
+      if (!key) continue
+      const incomingSubs = (l.subLocations ?? [])
+        .map((sub) => ({ name: sub.name?.trim(), description: sub.description ?? '' }))
+        .filter((sub): sub is { name: string; description: string } => Boolean(sub.name))
+      const existing = locMap.get(key)
+      if (existing) {
+        if (l.description && l.description.length > existing.description.length) {
+          existing.description = l.description
+        }
+        const subNames = new Set(existing.subLocations.map((sub) => sub.name))
+        incomingSubs.forEach((sub) => {
+          if (!subNames.has(sub.name)) existing.subLocations.push(sub)
+        })
+      } else {
+        locMap.set(key, { name: key, description: l.description ?? '', subLocations: incomingSubs })
+      }
     }
     if (p.worldview && p.worldview.length > worldview.length) worldview = p.worldview
   }
 
   const characters = Array.from(charMap.values()).map((c, i) => ({ ...c, id: slugCharId(c.name, i) }))
-  const locations = Array.from(locMap.values()).map((l, i) => ({ id: `loc_${i + 1}`, ...l }))
+  const locations = Array.from(locMap.values()).map((l, i) => {
+    const id = `loc_${i + 1}`
+    return {
+      id,
+      name: l.name,
+      description: l.description,
+      subLocations: l.subLocations.map((sub, j) => ({ id: `${id}_sub_${j + 1}`, ...sub })),
+    }
+  })
 
   return {
     novelTitle,

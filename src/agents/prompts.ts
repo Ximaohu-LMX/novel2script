@@ -30,11 +30,11 @@ export function buildBiblePrompt(chunk: string): { system: string; user: string 
   const system = `你是剧本改编的设定分析助手。请从给定的小说文本片段中抽取人物、场景地点与世界观设定。
 要求:
 - 人物:给出名字、可能的别称、角色定位(protagonist主角/antagonist反派/supporting配角/minor龙套)、外貌性格描述、性格特征标签。
-- 地点:重要场景的名称与简述。
+- 地点:按"大场景/小场景"层级整理。大场景是宅邸、学校、城市街区等稳定空间;小场景是书房、走廊、咖啡馆包间等具体可拍摄空间。若无法细分,subLocations 为空数组。
 - 世界观:背景设定、时代、特殊规则等(若有)。
 - 严格只输出 JSON,不要解释文字或 Markdown 围栏。
 输出格式:
-{"characters":[{"name":"","aliases":[],"role":"supporting","description":"","traits":[]}],"locations":[{"name":"","description":""}],"worldview":""}`
+{"characters":[{"name":"","aliases":[],"role":"supporting","description":"","traits":[]}],"locations":[{"name":"","description":"","subLocations":[{"name":"","description":""}]}],"worldview":""}`
   const user = `请分析以下文本片段:\n\n${chunk}`
   return { system, user }
 }
@@ -49,6 +49,16 @@ export function buildScriptPrompt(
   const charList = bible.characters
     .map((c) => `  - id: ${c.id} | ${c.name}(${c.role})${c.aliases.length ? ' 别称:' + c.aliases.join('、') : ''}`)
     .join('\n')
+  const locationList = bible.locations.length
+    ? bible.locations.map((location) => {
+      const subs = location.subLocations ?? []
+      if (!subs.length) return `  - ${location.name}: ${location.description || '无描述'}`
+      return [
+        `  - ${location.name}: ${location.description || '无描述'}`,
+        ...subs.map((sub) => `    - ${location.name}-${sub.name}: ${sub.description || '无描述'}`),
+      ].join('\n')
+    }).join('\n')
+    : '  (无预设地点)'
 
   const system = `你是专业的剧本改编编剧。请将给定的小说章节改编为结构化剧本,并以严格的 YAML 输出。
 
@@ -92,12 +102,16 @@ scenes: 场景序列
 
 【硬性要求】
 - 人物 id 必须使用下方设定提供的 id,不要自创新人物 id。
+- 场景标题 heading.location 必须优先从下方地点层级中选用并保持命名统一:有小场景时写"大场景-小场景"(如"林家宅邸-书房"),没有小场景时只写大场景名。
 - 一个章节可拆成多个场景。
 - 严格只输出合法 YAML,不要任何解释文字。可以用 \`\`\`yaml 围栏包裹。
 - 所有对白和描述使用中文。`
 
   const user = `【全局设定 · 人物表】
 ${charList}
+
+【全局设定 · 地点层级】
+${locationList}
 
 【世界观】
 ${bible.worldview || '(无特别设定)'}

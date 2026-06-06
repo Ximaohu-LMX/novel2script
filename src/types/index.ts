@@ -60,10 +60,17 @@ export interface BibleCharacter {
   traits: string[]
 }
 
+export interface BibleSubLocation {
+  id: string
+  name: string
+  description: string
+}
+
 export interface BibleLocation {
   id: string
   name: string
   description: string
+  subLocations: BibleSubLocation[]
 }
 
 export interface StoryBible {
