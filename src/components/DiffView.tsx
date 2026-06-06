@@ -8,12 +8,34 @@ interface Props {
   warning?: string
   onAcceptHunk?: (id: string) => void
   onRejectHunk?: (id: string) => void
+  onResetHunk?: (id: string) => void
+  onAcceptAllPending?: () => void
+  onRejectAllPending?: () => void
 }
 
-export default function DiffView({ oldText, newText, review, warning, onAcceptHunk, onRejectHunk }: Props) {
+export default function DiffView({
+  oldText,
+  newText,
+  review,
+  warning,
+  onAcceptHunk,
+  onRejectHunk,
+  onResetHunk,
+  onAcceptAllPending,
+  onRejectAllPending,
+}: Props) {
   if (review) {
+    const hunks = review.chunks.flatMap((chunk) => (chunk.type === 'hunk' ? [chunk.hunk] : []))
+    const pendingCount = hunks.filter((hunk) => hunk.status === 'pending').length
     return (
       <div style={wrap}>
+        <div style={reviewToolbar}>
+          <span>还剩 {pendingCount} 个待确认 / 共 {hunks.length} 处改动</span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button className="ghost small" disabled={pendingCount === 0} onClick={onRejectAllPending}>一键拒绝</button>
+            <button className="primary small" disabled={pendingCount === 0} onClick={onAcceptAllPending}>一键接受</button>
+          </span>
+        </div>
         {warning && (
           <div style={warningBox}>
             Schema 提醒:{warning}
@@ -27,6 +49,7 @@ export default function DiffView({ oldText, newText, review, warning, onAcceptHu
               hunk={chunk.hunk}
               onAccept={onAcceptHunk}
               onReject={onRejectHunk}
+              onReset={onResetHunk}
             />
           )
         })}
@@ -61,14 +84,21 @@ function HunkBlock({
   hunk,
   onAccept,
   onReject,
+  onReset,
 }: {
   hunk: DiffReviewHunk
   onAccept?: (id: string) => void
   onReject?: (id: string) => void
+  onReset?: (id: string) => void
 }) {
   const statusLabel = hunk.status === 'accepted' ? '已接受' : hunk.status === 'rejected' ? '已拒绝' : '待处理'
+  const statusStyle = hunk.status === 'accepted'
+    ? acceptedHunk
+    : hunk.status === 'rejected'
+      ? rejectedHunk
+      : undefined
   return (
-    <div style={hunkBox}>
+    <div style={{ ...hunkBox, ...statusStyle }}>
       <div style={hunkHeader}>
         <span>
           @@ -{hunk.oldStart} +{hunk.newStart} · {statusLabel}
@@ -79,9 +109,14 @@ function HunkBlock({
             <button className="primary small" onClick={() => onAccept?.(hunk.id)}>接受</button>
           </span>
         )}
+        {hunk.status !== 'pending' && (
+          <button className="ghost small" onClick={() => onReset?.(hunk.id)}>撤销</button>
+        )}
       </div>
-      {renderChangedLines(hunk.oldText, 'removed', hunk.id)}
-      {renderChangedLines(hunk.newText, 'added', hunk.id)}
+      <div style={hunk.status === 'rejected' ? rejectedContent : undefined}>
+        {renderChangedLines(hunk.oldText, 'removed', hunk.id)}
+        {renderChangedLines(hunk.newText, 'added', hunk.id)}
+      </div>
     </div>
   )
 }
@@ -137,6 +172,39 @@ const hunkHeader: React.CSSProperties = {
   background: 'var(--bg-elev)',
   color: 'var(--text-dim)',
   fontFamily: 'var(--sans)',
+}
+
+const reviewToolbar: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 8,
+  padding: '8px 10px',
+  marginBottom: 10,
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'var(--bg-elev)',
+  color: 'var(--text-dim)',
+  fontFamily: 'var(--sans)',
+}
+
+const acceptedHunk: React.CSSProperties = {
+  borderColor: 'var(--added-text)',
+  boxShadow: 'inset 3px 0 0 var(--added-text)',
+}
+
+const rejectedHunk: React.CSSProperties = {
+  borderColor: 'var(--removed-text)',
+  boxShadow: 'inset 3px 0 0 var(--removed-text)',
+  opacity: 0.78,
+}
+
+const rejectedContent: React.CSSProperties = {
+  textDecoration: 'line-through',
+  textDecorationColor: 'var(--removed-text)',
 }
 
 const warningBox: React.CSSProperties = {
