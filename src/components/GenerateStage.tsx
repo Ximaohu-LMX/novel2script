@@ -31,6 +31,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchProgress, setBatchProgress] = useState('')
+  const allSelected = project.chapters.length > 0 && project.chapters.every((chapter) => selected.has(chapter.index))
 
   const setStyle = (patch: Partial<StyleConfig>) =>
     onUpdate((p) => ({ ...p, styleConfig: { ...p.styleConfig, ...patch } }))
@@ -47,6 +48,10 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
       next.has(idx) ? next.delete(idx) : next.add(idx)
       return next
     })
+
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? new Set() : new Set(project.chapters.map((c) => c.index)))
+  }
 
   // 批量生成(受 maxConcurrency 限制)
   const batchGenerate = async () => {
@@ -133,7 +138,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
 
         <div style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
           <button className="ghost small" style={{ width: '100%', marginBottom: 6 }}
-            onClick={() => setSelected(new Set(project.chapters.map((c) => c.index)))}>全选</button>
+            onClick={toggleSelectAll}>{allSelected ? '取消全选' : '全选'}</button>
           <button className="primary" style={{ width: '100%' }} disabled={selected.size === 0 || batchBusy}
             onClick={batchGenerate}>
             {batchBusy ? `批量生成 ${batchProgress}` : `批量生成 (${selected.size})`}
