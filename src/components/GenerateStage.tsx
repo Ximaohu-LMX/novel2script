@@ -134,7 +134,7 @@ export default function GenerateStage({ project, llm, onUpdate }: Props) {
         <div style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
           <button className="ghost small" style={{ width: '100%', marginBottom: 6 }}
             onClick={() => setSelected(new Set(project.chapters.map((c) => c.index)))}>全选</button>
-          <button className="primary accent" style={{ width: '100%' }} disabled={selected.size === 0 || batchBusy}
+          <button className="primary" style={{ width: '100%' }} disabled={selected.size === 0 || batchBusy}
             onClick={batchGenerate}>
             {batchBusy ? `批量生成 ${batchProgress}` : `批量生成 (${selected.size})`}
           </button>
