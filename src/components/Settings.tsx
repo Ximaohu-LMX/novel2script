@@ -14,12 +14,26 @@ const PRESETS: Record<Provider, { baseUrl: string; model: string }> = {
 
 export default function Settings({ config, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<LLMConfig>(config)
+  const [providerDrafts, setProviderDrafts] = useState<Record<Provider, LLMConfig>>({
+    openai: config.provider === 'openai'
+      ? config
+      : { ...config, provider: 'openai', baseUrl: PRESETS.openai.baseUrl, model: PRESETS.openai.model },
+    anthropic: config.provider === 'anthropic'
+      ? config
+      : { ...config, provider: 'anthropic', baseUrl: PRESETS.anthropic.baseUrl, model: PRESETS.anthropic.model },
+  })
 
-  const set = <K extends keyof LLMConfig>(k: K, v: LLMConfig[K]) =>
-    setDraft((d) => ({ ...d, [k]: v }))
+  const set = <K extends keyof LLMConfig>(k: K, v: LLMConfig[K]) => {
+    const next = { ...draft, [k]: v }
+    setDraft(next)
+    setProviderDrafts((all) => ({ ...all, [next.provider]: next }))
+  }
 
   const switchProvider = (p: Provider) => {
-    setDraft((d) => ({ ...d, provider: p, baseUrl: PRESETS[p].baseUrl, model: PRESETS[p].model }))
+    const currentSaved = { ...providerDrafts[draft.provider], ...draft }
+    const next = providerDrafts[p] ?? { ...draft, provider: p, baseUrl: PRESETS[p].baseUrl, model: PRESETS[p].model }
+    setProviderDrafts((all) => ({ ...all, [draft.provider]: currentSaved, [p]: next }))
+    setDraft(next)
   }
 
   return (
