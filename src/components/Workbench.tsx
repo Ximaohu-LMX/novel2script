@@ -310,7 +310,14 @@ export default function Workbench({ project, llm, state, onUpdate, onProjectUpda
               </button>
             </div>
           ) : view === 'preview' ? (
-            <ScriptPreview yamlText={v.workingCopy} charNames={charNames} />
+            <ScriptPreview
+              yamlText={v.workingCopy}
+              charNames={charNames}
+              onChange={(yamlText) => onUpdate((s) => ({
+                ...s,
+                versioning: { ...s.versioning, workingCopy: yamlText },
+              }))}
+            />
           ) : view === 'code' ? (
             <Editor
               height="100%"
