@@ -19,6 +19,56 @@ function parseJson<T>(raw: string): T {
   return JSON.parse(body.slice(start, end + 1)) as T
 }
 
+interface SplitMarker {
+  index: number
+  title: string
+  summary: string
+  startMarker: string
+}
+
+function findHeadingBefore(rawText: string, index: number): number {
+  const headingPattern = /(^|\n)[ \t]*(?:第[^\n]{1,16}章|chapter\s*\d+)[^\n]*/gi
+  let match: RegExpExecArray | null
+  let best = -1
+
+  while ((match = headingPattern.exec(rawText))) {
+    const headingIndex = match.index + (match[0].startsWith('\n') ? 1 : 0)
+    if (headingIndex > index) break
+    best = headingIndex
+  }
+
+  return best >= 0 && index - best <= 200 ? best : -1
+}
+
+function findChapterStart(rawText: string, marker: SplitMarker): number {
+  const title = marker.title?.trim()
+  const startMarker = marker.startMarker?.trim()
+  const headingPattern = /(^|\n)[ \t]*(?:第[^\n]{1,16}章|chapter\s*\d+)[^\n]*/gi
+  let match: RegExpExecArray | null
+
+  while ((match = headingPattern.exec(rawText))) {
+    const line = match[0].replace(/^\n/, '')
+    const index = match.index + (match[0].startsWith('\n') ? 1 : 0)
+    if (title && line.includes(title)) return index
+    if (startMarker && line.includes(startMarker)) return index
+  }
+
+  if (startMarker) {
+    const exact = rawText.indexOf(startMarker)
+    if (exact >= 0) {
+      const heading = findHeadingBefore(rawText, exact)
+      return heading >= 0 ? heading : exact
+    }
+    const prefix = rawText.indexOf(startMarker.slice(0, 15))
+    if (prefix >= 0) {
+      const heading = findHeadingBefore(rawText, prefix)
+      return heading >= 0 ? heading : prefix
+    }
+  }
+
+  return -1
+}
+
 function slugCharId(name: string, i: number): string {
   return `char_${i + 1}`
 }
@@ -31,16 +81,17 @@ export async function splitChapters(rawText: string, config: LLMConfig): Promise
     { role: 'system', content: system },
     { role: 'user', content: user },
   ])
-  const parsed = parseJson<{ chapters: { index: number; title: string; summary: string; startMarker: string }[] }>(out)
+  const parsed = parseJson<{ chapters: SplitMarker[] }>(out)
 
-  // 用 startMarker 把原文切回每章 content
+  // 优先用原文中的章节标题行定位边界,找不到再退回 startMarker。
   const markers = parsed.chapters
+  const starts = markers.map((m) => findChapterStart(rawText, m))
   const chapters: Chapter[] = []
   for (let i = 0; i < markers.length; i++) {
     const m = markers[i]
-    const startIdx = m.startMarker ? rawText.indexOf(m.startMarker.slice(0, 15)) : -1
-    const nextMarker = markers[i + 1]?.startMarker?.slice(0, 15)
-    const endIdx = nextMarker ? rawText.indexOf(nextMarker) : rawText.length
+    const startIdx = starts[i] >= 0 ? starts[i] : (i === 0 ? 0 : -1)
+    const nextStart = starts.slice(i + 1).find((value) => value > startIdx)
+    const endIdx = nextStart ?? rawText.length
     const content =
       startIdx >= 0 && endIdx > startIdx
         ? rawText.slice(startIdx, endIdx).trim()
@@ -49,7 +100,7 @@ export async function splitChapters(rawText: string, config: LLMConfig): Promise
       index: m.index ?? i + 1,
       title: m.title ?? `第${i + 1}章`,
       summary: m.summary ?? '',
-      content: content || rawText, // 极端兜底
+      content: content || (markers.length === 1 ? rawText : ''), // 极端兜底
     })
   }
   // 若只切出 1 章但原文较长,退化为整篇

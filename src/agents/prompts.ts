@@ -18,6 +18,7 @@ export function buildSplitPrompt(rawText: string): { system: string; user: strin
 要求:
 - 优先依据原文中已有的章节标记(如"第X章""Chapter X")切分;若无明显标记,则按剧情段落合理切分。
 - 每章简述控制在 30 字以内,概括该章核心事件。
+- startMarker 必须尽量使用原文中的章节标题行(如"第三章 真相的边缘");只有原文没有章节标题时,才使用正文开头的前 15 个字。
 - 严格只输出 JSON,不要任何解释文字或 Markdown 围栏。
 输出格式:
 {"chapters":[{"index":1,"title":"章节标题","summary":"一句话简述","startMarker":"该章开头的前15个字"}]}`
