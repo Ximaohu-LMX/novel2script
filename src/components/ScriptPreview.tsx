@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import yaml from 'js-yaml'
 import type { Script, Scene, SceneElement } from '../types'
-import { scriptToYaml } from '../lib/schema'
 
 type EditableField = 'synopsis' | 'description' | 'line' | 'emotion'
 
@@ -47,8 +46,8 @@ export default function ScriptPreview({ yamlText, charNames, onChange }: Props) 
 
   const saveEdit = () => {
     if (!editing || !onChange || !script) return
-    const next = updateScriptField(script, editing, editing.value)
-    onChange(scriptToYaml(next))
+    const next = replaceYamlField(yamlText, editing, editing.value)
+    if (next) onChange(next)
     setEditing(null)
   }
 
@@ -289,24 +288,128 @@ function isEditing(current: EditingTarget | null, target: EditTarget): boolean {
   )
 }
 
-function updateScriptField(script: Script, target: EditTarget, value: string): Script {
-  return {
-    ...script,
-    scenes: script.scenes.map((scene, sceneIndex) => {
-      if (sceneIndex !== target.sceneIndex) return scene
+function replaceYamlField(text: string, target: EditTarget, value: string): string | null {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  const fieldLine = findTargetFieldLine(lines, target)
+  if (fieldLine === null) return null
 
-      if (target.elementIndex === undefined) {
-        return target.field === 'synopsis' ? { ...scene, synopsis: value } : scene
-      }
+  const indent = countIndent(lines[fieldLine])
+  const endLine = findScalarEndLine(lines, fieldLine, indent)
+  const replacement = dumpFieldAtIndent(target.field, value, indent)
+  lines.splice(fieldLine, endLine - fieldLine + 1, ...replacement)
+  return lines.join(eol)
+}
 
-      return {
-        ...scene,
-        elements: scene.elements.map((element, elementIndex) => (
-          elementIndex === target.elementIndex ? { ...element, [target.field]: value } : element
-        )),
-      }
-    }),
+function findTargetFieldLine(lines: string[], target: EditTarget): number | null {
+  const scenesLine = lines.findIndex((line) => /^\s*scenes\s*:/.test(line))
+  if (scenesLine < 0) return null
+
+  const scenesIndent = countIndent(lines[scenesLine])
+  const scene = findListItemBlock(lines, scenesLine + 1, scenesIndent, target.sceneIndex)
+  if (!scene) return null
+
+  if (target.elementIndex === undefined) {
+    return findFieldLine(lines, scene.start + 1, scene.end, scene.indent + 2, target.field)
   }
+
+  const elementsLine = findFieldLine(lines, scene.start + 1, scene.end, scene.indent + 2, 'elements')
+  if (elementsLine === null) return null
+
+  const element = findListItemBlock(lines, elementsLine + 1, countIndent(lines[elementsLine]), target.elementIndex)
+  if (!element || element.start > scene.end) return null
+
+  return findFieldLine(lines, element.start + 1, element.end, element.indent + 2, target.field)
+}
+
+function findListItemBlock(
+  lines: string[],
+  from: number,
+  containerIndent: number,
+  targetIndex: number,
+): { start: number; end: number; indent: number } | null {
+  let seen = -1
+  const itemIndent = containerIndent + 2
+
+  for (let i = from; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!line.trim()) continue
+
+    const indent = countIndent(line)
+    if (indent <= containerIndent) break
+    if (indent !== itemIndent || !isListItemAtIndent(line, itemIndent)) continue
+
+    seen += 1
+    if (seen !== targetIndex) continue
+
+    return {
+      start: i,
+      end: findBlockEnd(lines, i, indent, containerIndent),
+      indent,
+    }
+  }
+
+  return null
+}
+
+function findBlockEnd(lines: string[], start: number, itemIndent: number, containerIndent: number): number {
+  let end = start
+
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!line.trim()) {
+      end = i
+      continue
+    }
+
+    const indent = countIndent(line)
+    if (indent <= containerIndent) break
+    if (indent === itemIndent && isListItemAtIndent(line, indent)) break
+
+    end = i
+  }
+
+  return end
+}
+
+function findFieldLine(lines: string[], from: number, to: number, indent: number, field: string): number | null {
+  const pattern = new RegExp(`^ {${indent}}${escapeRegExp(field)}\\s*:`)
+  for (let i = from; i <= to && i < lines.length; i += 1) {
+    if (pattern.test(lines[i])) return i
+  }
+  return null
+}
+
+function findScalarEndLine(lines: string[], fieldLine: number, fieldIndent: number): number {
+  const valuePart = lines[fieldLine].slice(lines[fieldLine].indexOf(':') + 1).trim()
+  if (valuePart && !/^[|>]/.test(valuePart)) return fieldLine
+
+  let end = fieldLine
+  for (let i = fieldLine + 1; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (line.trim() && countIndent(line) <= fieldIndent) break
+    end = i
+  }
+  return end
+}
+
+function dumpFieldAtIndent(field: string, value: string, indent: number): string[] {
+  const dumped = yaml.dump({ [field]: value }, { lineWidth: -1, noRefs: true, sortKeys: false }).trimEnd()
+  const prefix = ' '.repeat(indent)
+  return dumped.split('\n').map((line) => `${prefix}${line}`)
+}
+
+function isListItemAtIndent(line: string, indent: number): boolean {
+  return countIndent(line) === indent && line.slice(indent).startsWith('- ')
+}
+
+function countIndent(line: string): number {
+  const match = line.match(/^ */)
+  return match ? match[0].length : 0
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 const sceneHeading: React.CSSProperties = {
